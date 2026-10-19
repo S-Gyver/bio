@@ -17,12 +17,57 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#include <DHT.h>
 
-// --- ตั้งค่าเซนเซอร์ DHT22 (ขา G4 / GPIO 4) ---
+// --- ขาเชื่อมต่อเซนเซอร์ DHT22 (ขา G4 / GPIO 4) ---
 #define DHTPIN 4
-#define DHTTYPE DHT22
-DHT dht(DHTPIN, DHTTYPE);
+
+// ฟังก์ชันอ่านค่าจาก DHT22 โดยตรง (Native C++ ไม่ต้องลงไลบรารีภายนอก)
+bool readDHT22(float &temperature, float &humidity) {
+  uint8_t data[5] = {0, 0, 0, 0, 0};
+  
+  // 1. ส่งสัญญาณเริ่มอ่าน (Start Signal)
+  pinMode(DHTPIN, OUTPUT);
+  digitalWrite(DHTPIN, LOW);
+  delay(2); // ดึง LOW 2ms
+  digitalWrite(DHTPIN, HIGH);
+  delayMicroseconds(30);
+  pinMode(DHTPIN, INPUT_PULLUP);
+
+  // 2. รอเซนเซอร์ตอบกลับ (Response: 80us LOW, 80us HIGH)
+  unsigned long timeout = micros();
+  while (digitalRead(DHTPIN) == HIGH) { if (micros() - timeout > 100) return false; }
+  timeout = micros();
+  while (digitalRead(DHTPIN) == LOW)  { if (micros() - timeout > 100) return false; }
+  timeout = micros();
+  while (digitalRead(DHTPIN) == HIGH) { if (micros() - timeout > 100) return false; }
+
+  // 3. อ่านข้อมูล 40 บิต (5 ไบต์)
+  for (int i = 0; i < 40; i++) {
+    timeout = micros();
+    while (digitalRead(DHTPIN) == LOW) { if (micros() - timeout > 100) return false; }
+    
+    unsigned long t = micros();
+    timeout = micros();
+    while (digitalRead(DHTPIN) == HIGH) { if (micros() - timeout > 120) return false; }
+    
+    // พัลส์ HIGH นานกว่า 40us คือบิต 1, ถ้าน้อยกว่าคือบิต 0
+    if ((micros() - t) > 40) {
+      data[i / 8] |= (1 << (7 - (i % 8)));
+    }
+  }
+
+  // 4. ตรวจสอบ Checksum
+  if (data[4] != ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) {
+    return false;
+  }
+
+  humidity = ((data[0] << 8) | data[1]) * 0.1;
+  int16_t rawTemp = ((data[2] & 0x7F) << 8) | data[3];
+  if (data[2] & 0x80) rawTemp = -rawTemp;
+  temperature = rawTemp * 0.1;
+
+  return true;
+}
 
 // --- 1. การตั้งค่า WiFi ---
 const char* ssid = "Earth_Aoey_Aey";
@@ -146,10 +191,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n--- เริ่มต้น ESP32 Supabase Cloud Controller ---");
-
-  // เริ่มต้นเซนเซอร์ DHT22
-  dht.begin();
-  Serial.println("[DHT22] Initialized on GPIO 4 (G4)");
+  Serial.println("[DHT22] Initialized on GPIO 4 (G4) - Ready");
 
   // สั่งปิดรีเลย์ทุกช่องไว้ก่อน
   for (int i = 0; i < 4; i++) {
@@ -182,18 +224,18 @@ void loop() {
     syncRelaysFromSupabase();
   }
 
-  // 2. อ่านค่าเซนเซอร์ DHT22 จริง และส่งขึ้น Supabase ทุก 5 วินาที
+  // 2. อ่านค่าเซนเซอร์ DHT22 จริง (Native Reader) และส่งขึ้น Supabase ทุก 4 วินาที
   if (now - lastTelemetryTime >= telemetryInterval) {
     lastTelemetryTime = now;
 
-    float t = dht.readTemperature();
-    float h = dht.readHumidity();
+    float t = 0.0;
+    float h = 0.0;
 
-    if (isnan(t) || isnan(h)) {
-      Serial.println("[DHT22] อ่านค่าไม่สำเร็จ กรุณาตรวจสายขา G4 (+ ที่ 3.3V, - ที่ GND)");
-    } else {
+    if (readDHT22(t, h)) {
       Serial.printf("[DHT22] ค่าจริง -> อุณหภูมิ: %.1f °C, ความชื้น: %.1f %%\n", t, h);
       sendTelemetryToSupabase(t, h, 59, 130, 246, 1200, "#3B82F6");
+    } else {
+      Serial.println("[DHT22] กำลังรอสัญญาณจากเซนเซอร์ (ตรวจสาย: + ต่อ 3.3V, - ต่อ GND, OUT ต่อ G4)");
     }
   }
 
