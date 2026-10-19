@@ -18,6 +18,12 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <DHT.h>
+
+// --- ตั้งค่าเซนเซอร์ DHT22 (ขา G4 / GPIO 4) ---
+#define DHTPIN 4
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
 
 // --- 1. การตั้งค่า WiFi ---
 const char* ssid = "Earth_Aoey_Aey";
@@ -138,6 +144,10 @@ void setup() {
   delay(1000);
   Serial.println("\n--- เริ่มต้น ESP32 Supabase Cloud Controller ---");
 
+  // เริ่มต้นเซนเซอร์ DHT22
+  dht.begin();
+  Serial.println("[DHT22] Initialized on GPIO 4 (G4)");
+
   // สั่งปิดรีเลย์ทุกช่องไว้ก่อน
   for (int i = 0; i < 4; i++) {
     setRelay(i, false);
@@ -169,13 +179,19 @@ void loop() {
     syncRelaysFromSupabase();
   }
 
-  // 2. ส่งค่าเซนเซอร์ขึ้นไปอัปเดตบน Supabase ทุก 5 วินาที
+  // 2. อ่านค่าเซนเซอร์ DHT22 จริง และส่งขึ้น Supabase ทุก 5 วินาที
   if (now - lastTelemetryTime >= telemetryInterval) {
     lastTelemetryTime = now;
-    // อ่านค่าเซนเซอร์จริงจาก DHT22 หรือ TCS34725 มาใส่ตรงนี้ได้เลย
-    float t = 28.5 + ((random(-3, 4)) * 0.1);
-    float h = 62.0 + ((random(-5, 6)) * 0.2);
-    sendTelemetryToSupabase(t, h, 59, 130, 246, 1200, "#3B82F6");
+
+    float t = dht.readTemperature();
+    float h = dht.readHumidity();
+
+    if (isnan(t) || isnan(h)) {
+      Serial.println("[DHT22] อ่านค่าไม่สำเร็จ กรุณาตรวจสายขา G4 (+ ที่ 3.3V, - ที่ GND)");
+    } else {
+      Serial.printf("[DHT22] ค่าจริง -> อุณหภูมิ: %.1f °C, ความชื้น: %.1f %%\n", t, h);
+      sendTelemetryToSupabase(t, h, 59, 130, 246, 1200, "#3B82F6");
+    }
   }
 
   // ป้องกัน WiFi หลุดแล้วไม่ต่อใหม่
