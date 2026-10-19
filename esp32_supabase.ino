@@ -52,6 +52,7 @@ void checkSwitchFromSupabase() {
     https.addHeader("apikey", supabaseAnonKey);
     https.addHeader("Authorization", String("Bearer ") + supabaseAnonKey);
     https.addHeader("Accept", "application/json");
+    https.addHeader("Accept-Profile", "public"); // เจาะจง schema public ป้องกัน 404
 
     int httpCode = https.GET();
     if (httpCode == HTTP_CODE_OK) {
@@ -70,6 +71,7 @@ void checkSwitchFromSupabase() {
       }
     } else {
       Serial.printf("[Cloud] ตรวจสอบสถานะไม่สำเร็จ: HTTP %d\n", httpCode);
+      Serial.println(https.getString());
     }
     https.end();
   }
