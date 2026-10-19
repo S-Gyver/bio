@@ -1,11 +1,10 @@
 /*
  * =========================================================================
- * ESP32 4-Channel Relay & DHT Temperature/Humidity - Supabase Cloud
+ * ESP32 Complete IoT Controller - Supabase Cloud
+ * 4-Channel Relays + DHT Temp/Humidity + TCS34725 Color Sensor
  * =========================================================================
- * ควบคุมสวิตช์รีเลย์ 4 ช่อง และอ่านค่าอุณหภูมิ/ความชื้น ส่งขึ้น Cloud & Web Dashboard
  * 
- * การต่อสาย:
- * 1. Relay 4 ช่อง (Active LOW แบบ Open-Drain ไม่กินไฟค้าง):
+ * 1. Relay 4 ช่อง (Active LOW แบบ Open-Drain ปลอดภัย ตัดวงจร 100%):
  *    - IN 1 : GPIO 16 (สวิตช์ 1)
  *    - IN 2 : GPIO 17 (สวิตช์ 2)
  *    - IN 3 : GPIO 18 (สวิตช์ 3)
@@ -14,29 +13,56 @@
  *    - GND  : GND ของ ESP32
  * 
  * 2. เซนเซอร์วัดอุณหภูมิและความชื้น (DHT11 / DHT22):
- *    - ขา + (VCC) : ขา 3.3V (หรือ 5V) ของ ESP32
- *    - ขา - (GND) : ขา GND ของ ESP32
- *    - ขา OUT/DATA: ขา GPIO 4 (G4) ของ ESP32
+ *    - ขา + (VCC) : 3.3V
+ *    - ขา - (GND) : GND
+ *    - ขา OUT     : GPIO 4
+ * 
+ * 3. เซนเซอร์ตรวจจับสี (TCS34725 I2C Color Sensor):
+ *    - ขา VIN / VCC : 3.3V
+ *    - ขา GND       : GND
+ *    - ขา SDA       : GPIO 21
+ *    - ขา SCL       : GPIO 22
+ *    - ขา LED       : ปล่อยลอย หรือต่อ 3.3V เพื่อเปิดไฟส่องวัตถุ
+ * 
  * =========================================================================
- * ข้อดี: มีฟังก์ชันอ่าน DHT ในตัว ไม่ต้องติดตั้ง Library เพิ่ม (Zero Library Error)
+ * ข้อดี: มี Driver สำหรับอ่าน DHT และ TCS34725 ในตัว
+ * ไม่ต้องติดตั้ง Library ภายนอกเพิ่มเติมใน Arduino IDE (Zero Library Dependency)
  * =========================================================================
  */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <Wire.h>
 
-// --- เลือกรุ่นเซนเซอร์ DHT ---
-// ถ้าใช้ DHT11 (ตัวสีฟ้า) ให้ใส่ false
-// ถ้าใช้ DHT22 (ตัวสีขาว) ให้ใส่ true
-const bool IS_DHT22 = false; 
-const int DHT_PIN = 4; // ขาเซนเซอร์อุณหภูมิ (GPIO 4)
+// --- ตั้งค่าเซนเซอร์ DHT ---
+const bool IS_DHT22 = false; // ตัวสีฟ้า (DHT11) = false, ตัวสีขาว (DHT22) = true
+const int DHT_PIN = 4;       // ขาต่อเซนเซอร์อุณหภูมิ (GPIO 4)
 
-// 1. กำหนดขา Relay 4 ช่อง (16, 17, 18, 19)
+// --- ขารีเลย์ 4 ช่อง (16, 17, 18, 19) ---
 const int relayPins[4] = {16, 17, 18, 19};
 bool relayStates[4] = {false, false, false, false};
 
-// ฟังก์ชันสั่งงานรีเลย์ Active LOW (Open-Drain ตัดวงจร 100% ป้องกันไฟค้าง)
+// --- การตั้งค่า WiFi ---
+const char* ssid = "Earth_Aoey_Aey";
+const char* password = "0894565410";
+
+// --- การตั้งค่า Supabase Cloud ---
+const char* supabaseUrl = "https://igiihteeeprpcxxlldkd.supabase.co";
+const char* supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlnaWlodGVlZXBycGN4eGxsZGtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODkwNzksImV4cCI6MjEwMDU2NTA3OX0.fr8_ZAYKQ3D-JgEtAWGJnNvKjoUmYxs1T7tjzzsEltw";
+
+// ตัวแปรช่วงเวลาการทำงาน
+unsigned long lastRelayCheck = 0;
+const unsigned long relayInterval = 1000;      // ตรวจสอบสถานะสวิตช์ทุก 1 วินาที
+
+unsigned long lastTelemetryCheck = 0;
+const unsigned long telemetryInterval = 4000;  // ส่งค่าเซนเซอร์ขึ้น Cloud ทุก 4 วินาที
+
+// ตัวแปรสถานะเซนเซอร์สี TCS34725 (I2C Addr: 0x29)
+#define TCS34725_ADDR 0x29
+bool tcsFound = false;
+
+// ฟังก์ชันสั่งงานรีเลย์ Active LOW (Open-Drain)
 void setRelay(int index, bool state) {
   if (index < 0 || index >= 4) return;
   relayStates[index] = state;
@@ -52,46 +78,100 @@ void setRelay(int index, bool state) {
   }
 }
 
-// 2. การตั้งค่า WiFi
-const char* ssid = "Earth_Aoey_Aey";
-const char* password = "0894565410";
-
-// 3. การตั้งค่า Supabase Cloud
-const char* supabaseUrl = "https://igiihteeeprpcxxlldkd.supabase.co";
-const char* supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlnaWlodGVlZXBycGN4eGxsZGtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODkwNzksImV4cCI6MjEwMDU2NTA3OX0.fr8_ZAYKQ3D-JgEtAWGJnNvKjoUmYxs1T7tjzzsEltw";
-
-unsigned long lastRelayCheck = 0;
-const unsigned long relayInterval = 1000; // ตรวจสอบคำสั่งสวิตช์ทุก 1 วินาที
-
-unsigned long lastTelemetryCheck = 0;
-const unsigned long telemetryInterval = 5000; // ส่งอุณหภูมิ/ความชื้นขึ้น Cloud ทุก 5 วินาที
-
-// ฟังก์ชันแกะค่า Boolean จาก JSON โดยไม่ต้องลงไลบรารีเพิ่ม
+// ฟังก์ชันอ่านค่า Boolean จาก JSON
 bool parseJsonBool(const String& json, const String& key) {
   int keyIndex = json.indexOf("\"" + key + "\":");
   if (keyIndex == -1) return false;
-  
   String val = json.substring(keyIndex + key.length() + 3, keyIndex + key.length() + 9);
   val.trim();
   return val.startsWith("true") || val.startsWith("1");
 }
 
-// ฟังก์ชันอ่านค่าเซนเซอร์ DHT11 / DHT22 โดยตรง (ไม่ต้องพึ่งไลบรารีภายนอก)
+// -------------------------------------------------------------
+// ไดรเวอร์อ่านเซนเซอร์สี TCS34725 (ใช้ Wire.h ในตัว ESP32)
+// -------------------------------------------------------------
+bool initTCS34725() {
+  Wire.begin(21, 22); // SDA = GPIO 21, SCL = GPIO 22
+  Wire.setClock(100000);
+
+  // เช็คว่ามีอุปกรณ์ที่ I2C Address 0x29 หรือไม่
+  Wire.beginTransmission(TCS34725_ADDR);
+  if (Wire.endTransmission() != 0) {
+    return false;
+  }
+
+  // ตั้งค่าเวลา Integration Time (0xEB = 50ms)
+  Wire.beginTransmission(TCS34725_ADDR);
+  Wire.write(0x80 | 0x01); // ATIME
+  Wire.write(0xEB);
+  Wire.endTransmission();
+
+  // ตั้งค่า Gain (0x01 = 4x Gain)
+  Wire.beginTransmission(TCS34725_ADDR);
+  Wire.write(0x80 | 0x0F); // CONTROL
+  Wire.write(0x01);
+  Wire.endTransmission();
+
+  // สั่งเปิด Power ON (PON 0x01) และเริ่มอ่านสี (AEN 0x02) = 0x03
+  Wire.beginTransmission(TCS34725_ADDR);
+  Wire.write(0x80 | 0x00); // ENABLE
+  Wire.write(0x03);
+  Wire.endTransmission();
+
+  return true;
+}
+
+bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex) {
+  Wire.beginTransmission(TCS34725_ADDR);
+  Wire.write(0x80 | 0x14); // CDATAL register
+  if (Wire.endTransmission() != 0) return false;
+
+  Wire.requestFrom(TCS34725_ADDR, 8);
+  if (Wire.available() < 8) return false;
+
+  uint16_t c = Wire.read() | (Wire.read() << 8);
+  uint16_t r = Wire.read() | (Wire.read() << 8);
+  uint16_t g = Wire.read() | (Wire.read() << 8);
+  uint16_t b = Wire.read() | (Wire.read() << 8);
+
+  outC = c;
+  if (c == 0) {
+    outR = outG = outB = 0;
+    outHex = "#000000";
+    return true;
+  }
+
+  // คำนวณ RGB 0-255 จากสัดส่วนแสง
+  float rf = ((float)r / (float)c) * 255.0;
+  float gf = ((float)g / (float)c) * 255.0;
+  float bf = ((float)b / (float)c) * 255.0;
+
+  outR = constrain((int)rf, 0, 255);
+  outG = constrain((int)gf, 0, 255);
+  outB = constrain((int)bf, 0, 255);
+
+  char hexBuf[10];
+  snprintf(hexBuf, sizeof(hexBuf), "#%02X%02X%02X", outR, outG, outB);
+  outHex = String(hexBuf);
+
+  return true;
+}
+
+// -------------------------------------------------------------
+// ไดรเวอร์อ่านเซนเซอร์ DHT11 / DHT22 (ในตัว ไม่ต้องลง Library)
+// -------------------------------------------------------------
 bool readDHTSensor(int pin, float &temp, float &hum, bool is22) {
   uint8_t data[5] = {0, 0, 0, 0, 0};
 
-  // 1. ส่ง Start Signal (ดึง LOW 20ms)
   pinMode(pin, OUTPUT);
   digitalWrite(pin, LOW);
   delay(20);
 
-  // 2. ปล่อย High และรอการตอบสนอง
   pinMode(pin, INPUT_PULLUP);
   delayMicroseconds(35);
 
-  noInterrupts(); // ปิด interrupt ชั่วขณะเพื่อจับจังหวะ pulse ให้แม่นยำ
+  noInterrupts();
 
-  // 3. รอสัญญาณตอบสนองจากเซนเซอร์
   unsigned long timeout = micros();
   while (digitalRead(pin) == HIGH) {
     if (micros() - timeout > 100) { interrupts(); return false; }
@@ -105,7 +185,6 @@ bool readDHTSensor(int pin, float &temp, float &hum, bool is22) {
     if (micros() - timeout > 100) { interrupts(); return false; }
   }
 
-  // 4. อ่านบิตข้อมูล 40 บิต (5 ไบต์)
   for (int i = 0; i < 40; i++) {
     timeout = micros();
     while (digitalRead(pin) == LOW) {
@@ -115,27 +194,23 @@ bool readDHTSensor(int pin, float &temp, float &hum, bool is22) {
     while (digitalRead(pin) == HIGH) {
       if (micros() - startHigh > 110) { interrupts(); return false; }
     }
-    unsigned long duration = micros() - startHigh;
-    if (duration > 40) { // ถ้ายาวกว่า 40us คือบิต '1'
+    if ((micros() - startHigh) > 40) {
       data[i / 8] |= (1 << (7 - (i % 8)));
     }
   }
 
-  interrupts(); // คืนค่า interrupt
+  interrupts();
 
-  // 5. ตรวจสอบ Checksum
-  uint8_t sum = (data[0] + data[1] + data[2] + data[3]) & 0xFF;
-  if (data[4] != sum) {
+  if (data[4] != ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) {
     return false;
   }
 
-  // 6. แปลงข้อมูล
   if (is22) {
     hum = ((data[0] << 8) | data[1]) * 0.1;
     int16_t rawT = ((data[2] & 0x7F) << 8) | data[3];
     temp = rawT * 0.1;
     if (data[2] & 0x80) temp = -temp;
-  } else { // DHT11
+  } else {
     hum = (float)data[0] + (float)data[1] * 0.1;
     temp = (float)data[2] + (float)data[3] * 0.1;
   }
@@ -143,7 +218,9 @@ bool readDHTSensor(int pin, float &temp, float &hum, bool is22) {
   return true;
 }
 
-// ฟังก์ชันดึงสถานะรีเลย์ทั้ง 4 ช่องจาก Supabase
+// -------------------------------------------------------------
+// ดึงสถานะสวิตช์รีเลย์จาก Supabase
+// -------------------------------------------------------------
 void checkSwitchesFromSupabase() {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -157,7 +234,7 @@ void checkSwitchesFromSupabase() {
     https.addHeader("apikey", supabaseAnonKey);
     https.addHeader("Authorization", String("Bearer ") + supabaseAnonKey);
     https.addHeader("Accept", "application/json");
-    https.addHeader("Accept-Profile", "public"); // บังคับ schema public ป้องกัน 404
+    https.addHeader("Accept-Profile", "public");
 
     int httpCode = https.GET();
     if (httpCode == HTTP_CODE_OK) {
@@ -168,20 +245,19 @@ void checkSwitchesFromSupabase() {
       bool r3 = parseJsonBool(payload, "relay3");
       bool r4 = parseJsonBool(payload, "relay4");
 
-      // อัปเดตสถานะรีเลย์ทีละช่องหากมีการเปลี่ยนแปลง
       if (r1 != relayStates[0]) setRelay(0, r1);
       if (r2 != relayStates[1]) setRelay(1, r2);
       if (r3 != relayStates[2]) setRelay(2, r3);
       if (r4 != relayStates[3]) setRelay(3, r4);
-    } else {
-      Serial.printf("[Cloud] ตรวจสอบสวิตช์ไม่สำเร็จ: HTTP %d\n", httpCode);
     }
     https.end();
   }
 }
 
-// ฟังก์ชันส่งค่าอุณหภูมิและความชื้นขึ้น Supabase Cloud
-void sendTelemetryToSupabase(float temp, float hum) {
+// -------------------------------------------------------------
+// ส่งค่า Telemetry ทั้งหมด (อุณหภูมิ, ความชื้น, สี RGB, HEX) ขึ้น Supabase
+// -------------------------------------------------------------
+void sendTelemetryToSupabase(float temp, float hum, int r, int g, int b, int c, const String& hex) {
   if (WiFi.status() != WL_CONNECTED) return;
 
   WiFiClientSecure client;
@@ -194,16 +270,25 @@ void sendTelemetryToSupabase(float temp, float hum) {
     https.addHeader("apikey", supabaseAnonKey);
     https.addHeader("Authorization", String("Bearer ") + supabaseAnonKey);
     https.addHeader("Content-Type", "application/json");
-    https.addHeader("Content-Profile", "public"); // เจาะจง schema public ป้องกัน 404
+    https.addHeader("Content-Profile", "public");
     https.addHeader("Accept-Profile", "public");
 
-    String jsonBody = "{\"temperature\":" + String(temp, 1) + ",\"humidity\":" + String(hum, 1) + "}";
+    String jsonBody = "{";
+    if (temp > 0.0 || hum > 0.0) {
+      jsonBody += "\"temperature\":" + String(temp, 1) + ",\"humidity\":" + String(hum, 1) + ",";
+    }
+    jsonBody += "\"color_r\":" + String(r) + 
+                ",\"color_g\":" + String(g) + 
+                ",\"color_b\":" + String(b) + 
+                ",\"color_c\":" + String(c) + 
+                ",\"color_hex\":\"" + hex + "\"}";
 
     int httpCode = https.PATCH(jsonBody);
     if (httpCode >= 200 && httpCode < 300) {
-      Serial.printf("[Sensor -> Cloud] อุณหภูมิ: %.1f °C, ความชื้น: %.1f %% (HTTP %d)\n", temp, hum, httpCode);
+      Serial.printf("[Cloud Sync] อุณหภูมิ: %.1f°C | สี: %s (R:%d G:%d B:%d C:%d) -> อัปเดตสำเร็จ\n", 
+                    temp, hex.c_str(), r, g, b, c);
     } else {
-      Serial.printf("[Sensor -> Cloud] อัปเดตไม่สำเร็จ: HTTP %d\n", httpCode);
+      Serial.printf("[Cloud Sync] อัปเดตไม่สำเร็จ HTTP: %d\n", httpCode);
     }
     https.end();
   }
@@ -213,14 +298,23 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n=======================================================");
-  Serial.println(" ESP32 4-Channel Relay & DHT Sensor Controller ");
-  Serial.println(" ขา Relay: 16 (CH1), 17 (CH2), 18 (CH3), 19 (CH4) ");
-  Serial.println(" ขา เซนเซอร์อุณหภูมิ: GPIO 4 ");
+  Serial.println(" ESP32 Full IoT Controller (Relays + DHT + TCS34725) ");
+  Serial.println(" ขารีเลย์: 16 (CH1), 17 (CH2), 18 (CH3), 19 (CH4) ");
+  Serial.println(" ขา DHT อุณหภูมิ: GPIO 4 ");
+  Serial.println(" ขา เซนเซอร์สี: SDA=GPIO 21, SCL=GPIO 22 ");
   Serial.println("=======================================================");
 
-  // สั่งปิดรีเลย์ทุกช่องไว้ก่อนเมื่อเริ่มต้น
+  // สั่งปิดรีเลย์ทุกช่องไว้ก่อน
   for (int i = 0; i < 4; i++) {
     setRelay(i, false);
+  }
+
+  // เริ่มต้น I2C และตรวจสอบเซนเซอร์ตรวจจับสี TCS34725
+  tcsFound = initTCS34725();
+  if (tcsFound) {
+    Serial.println("✅ ตรวจพบเซนเซอร์ตรวจจับสี TCS34725 พร้อมทำงาน!");
+  } else {
+    Serial.println("⚠️ ยังไม่พบเซนเซอร์สี TCS34725 (เช็คสาย SDA=21, SCL=22, 3.3V, GND)");
   }
 
   // เชื่อมต่อ WiFi
@@ -237,29 +331,42 @@ void setup() {
   Serial.println("\nWiFi Connected successfully!");
   Serial.print("ESP32 IP: ");
   Serial.println(WiFi.localIP());
-  Serial.println("ระบบพร้อมทำงาน! รับคำสั่งสวิตช์และส่งค่าอุณหภูมิขึ้น Cloud แล้ว");
+  Serial.println("ระบบพร้อมทำงาน 100%!");
 }
 
 void loop() {
   unsigned long now = millis();
 
-  // 1. ตรวจสอบสถานะสวิตช์ทั้ง 4 ช่องจาก Supabase ทุก 1 วินาที
+  // 1. ตรวจสอบสวิตช์รีเลย์จาก Cloud ทุก 1 วินาที
   if (now - lastRelayCheck >= relayInterval) {
     lastRelayCheck = now;
     checkSwitchesFromSupabase();
   }
 
-  // 2. อ่านค่าเซนเซอร์อุณหภูมิ/ความชื้น และส่งขึ้น Supabase ทุก 5 วินาที
+  // 2. อ่านค่าเซนเซอร์และส่งขึ้น Supabase Cloud ทุก 4 วินาที
   if (now - lastTelemetryCheck >= telemetryInterval) {
     lastTelemetryCheck = now;
-    
+
+    // อ่านอุณหภูมิและความชื้น (DHT)
     float temperature = 0.0;
     float humidity = 0.0;
-    if (readDHTSensor(DHT_PIN, temperature, humidity, IS_DHT22)) {
-      sendTelemetryToSupabase(temperature, humidity);
-    } else {
-      Serial.println("[Sensor] กำลังอ่านค่าเซนเซอร์ หรือสายยังไม่เชื่อมต่อ...");
+    bool dhtOk = readDHTSensor(DHT_PIN, temperature, humidity, IS_DHT22);
+
+    // อ่านค่าสี (TCS34725)
+    int r = 0, g = 0, b = 0, c = 0;
+    String hex = "#000000";
+
+    // ถ้ายังไม่ได้เชื่อมต่อ ให้ลองสแกนเชื่อมต่อ I2C ใหม่อัตโนมัติ
+    if (!tcsFound) {
+      tcsFound = initTCS34725();
     }
+
+    if (tcsFound) {
+      readColorSensor(r, g, b, c, hex);
+    }
+
+    // ส่งข้อมูลขึ้น Supabase
+    sendTelemetryToSupabase(temperature, humidity, r, g, b, c, hex);
   }
 
   // ป้องกัน WiFi หลุดแล้วไม่ต่อใหม่
