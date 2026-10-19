@@ -3,13 +3,13 @@
  * ESP32 4-Channel Relay Controller - Supabase Cloud (GPIO 16, 17, 18, 19)
  * ควบคุมสวิตช์รีเลย์ 4 ช่องอิสระผ่าน Supabase Cloud & Web Dashboard
  * =========================================================================
- * การต่อสายรีเลย์ (Active LOW แบบ Open-Drain ปลอดภัย ไม่กินไฟค้าง):
+ * การต่อสาย:
  * - IN 1 : GPIO 16 (สวิตช์ 1)
  * - IN 2 : GPIO 17 (สวิตช์ 2)
  * - IN 3 : GPIO 18 (สวิตช์ 3)
  * - IN 4 : GPIO 19 (สวิตช์ 4)
- * - VCC  : 3.3V หรือ 5V (ขึ้นกับบอร์ดรีเลย์)
- * - GND  : GND ของ ESP32
+ * - VCC  : 3.3V หรือ 5V (VIN)
+ * - GND  : GND
  * =========================================================================
  */
 
@@ -83,7 +83,7 @@ void checkSwitchesFromSupabase() {
       bool r3 = parseJsonBool(payload, "relay3");
       bool r4 = parseJsonBool(payload, "relay4");
 
-      // อัปเดตสถานะรีเลย์ทีละช่องหากมีการเปลี่ยนแปลง
+      // อัปเดตสถานะรีเลย์ทีละช่องเมื่อมีการกดเปิด-ปิดจากหน้าเว็บ
       if (r1 != relayStates[0]) setRelay(0, r1);
       if (r2 != relayStates[1]) setRelay(1, r2);
       if (r3 != relayStates[2]) setRelay(2, r3);
