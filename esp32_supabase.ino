@@ -26,7 +26,7 @@
 DHT dht(DHTPIN, DHTTYPE);
 
 // --- 1. การตั้งค่า WiFi ---
-const char* ssid = "Earth_Aoey_Aey";
+const char* ssid = "Earth_Aoey_aey";
 const char* password = "0894565410";
 
 // --- 2. การตั้งค่า Supabase Cloud ---
@@ -55,7 +55,7 @@ unsigned long lastFetchTime = 0;
 const unsigned long fetchInterval = 1500; // ตรวจสอบคำสั่งสวิตช์ทุก 1.5 วินาที
 
 unsigned long lastTelemetryTime = 0;
-const unsigned long telemetryInterval = 5000; // ส่งค่าเซนเซอร์ขึ้น Cloud ทุก 5 วินาที
+const unsigned long telemetryInterval = 4000; // ส่งค่าเซนเซอร์ขึ้น Cloud ทุก 4 วินาที
 
 // ฟังก์ชันดึงสถานะรีเลย์จาก Supabase
 void syncRelaysFromSupabase() {
@@ -76,7 +76,6 @@ void syncRelaysFromSupabase() {
     if (httpCode == HTTP_CODE_OK) {
       String payload = https.getString();
       
-      // Parse JSON
       StaticJsonDocument<512> doc;
       DeserializationError error = deserializeJson(doc, payload);
 
@@ -94,7 +93,7 @@ void syncRelaysFromSupabase() {
         if (r4 != relayStates[3]) { setRelay(3, r4); Serial.printf("[Cloud] Relay 4 -> %s\n", r4 ? "ON" : "OFF"); }
       }
     } else {
-      Serial.printf("[Supabase] Sync Error: HTTP %d\n", httpCode);
+      Serial.printf("[Supabase] Sync Relays Error: HTTP %d\n", httpCode);
     }
     https.end();
   }
@@ -129,11 +128,12 @@ void sendTelemetryToSupabase(float temp, float hum, int r, int g, int b, int c, 
     String body;
     serializeJson(doc, body);
 
-    int httpCode = https.PATCH(body);
+    // ใช้ sendRequest("PATCH", ...) รองรับทุกเวอร์ชันของ ESP32
+    int httpCode = https.sendRequest("PATCH", body);
     if (httpCode >= 200 && httpCode < 300) {
-      // อัปเดตสำเร็จ
+      Serial.printf("[Cloud] ส่งข้อมูลเซนเซอร์ขึ้น Supabase สำเร็จ (HTTP %d)\n", httpCode);
     } else {
-      Serial.printf("[Supabase] Telemetry Update Failed: HTTP %d\n", httpCode);
+      Serial.printf("[Cloud] ส่งข้อมูลไม่สำเร็จ: HTTP %d (โปรดตรวจดู RLS Policy ใน Supabase)\n", httpCode);
     }
     https.end();
   }
