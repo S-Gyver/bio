@@ -103,6 +103,7 @@ const elements = {
   humValue: document.getElementById('humValue'),
   humStatusBadge: document.getElementById('humStatusBadge'),
   humBar: document.getElementById('humBar'),
+  randomDhtBtn: document.getElementById('randomDhtBtn'),
 
   // Color Sensor
   colorPreviewBox: document.getElementById('colorPreviewBox'),
@@ -358,6 +359,37 @@ function setupEventListeners() {
     randomizeColor();
     showToast(`สุ่มสีใหม่: ${state.color.hex}`, 'info');
   });
+
+  // Random/Test DHT22 Temperature & Humidity Button
+  if (elements.randomDhtBtn) {
+    elements.randomDhtBtn.addEventListener('click', async () => {
+      vibrate(30);
+      const newT = parseFloat((25.0 + Math.random() * 8.0).toFixed(1));
+      const newH = parseFloat((50.0 + Math.random() * 30.0).toFixed(1));
+
+      if (state.isDemoMode) {
+        state.dht.temp = newT;
+        state.dht.hum = newH;
+        renderDHT();
+        updateLastUpdatedTime();
+        showToast(`อัปเดตอุณหภูมิ: ${newT} °C | ความชื้น: ${newH} %`, 'info');
+      } else if (state.connMode === 'supabase' && state.supabaseClient) {
+        showToast(`กำลังส่งค่าอุณหภูมิ ${newT} °C ไปยัง Supabase...`, 'info');
+        try {
+          const { error } = await state.supabaseClient
+            .from('esp32_devices')
+            .update({ temperature: newT, humidity: newH, updated_at: new Date().toISOString() })
+            .eq('id', 1);
+
+          if (!error) {
+            showToast(`✅ อัปเดตไปยัง Cloud สำเร็จ: ${newT} °C`, 'success');
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    });
+  }
 }
 
 // --- Supabase Cloud Client & Realtime Subscription ---
@@ -746,13 +778,13 @@ function randomizeColor() {
 
 // --- Simulation Engine for Demo Mode ---
 function simulateRandomFluctuation() {
-  const tDelta = (Math.random() - 0.5) * 0.4;
-  state.dht.temp = parseFloat(Math.min(Math.max(state.dht.temp + tDelta, 24.0), 34.5).toFixed(1));
+  const tDelta = (Math.random() - 0.5) * 0.8;
+  state.dht.temp = parseFloat(Math.min(Math.max(state.dht.temp + tDelta, 25.0), 34.0).toFixed(1));
 
-  const hDelta = (Math.random() - 0.5) * 1.0;
+  const hDelta = (Math.random() - 0.5) * 1.6;
   state.dht.hum = parseFloat(Math.min(Math.max(state.dht.hum + hDelta, 45.0), 85.0).toFixed(1));
 
-  state.color.c = Math.max(200, state.color.c + Math.floor((Math.random() - 0.5) * 40));
+  state.color.c = Math.max(200, state.color.c + Math.floor((Math.random() - 0.5) * 50));
 }
 
 function setupPolling() {
@@ -776,6 +808,7 @@ function enableDemoMode() {
   consecutiveFailures = 0;
   state.isConnected = true;
   updateConnectionBadge('demo');
+  setupPolling(); // Ensure polling interval is running
   simulateRandomFluctuation();
   renderDHT();
   renderColorSensor();
