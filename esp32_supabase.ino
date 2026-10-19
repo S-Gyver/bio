@@ -17,7 +17,6 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#include <ArduinoJson.h>
 #include <DHT.h>
 
 // --- ตั้งค่าเซนเซอร์ DHT22 (ขา G4 / GPIO 4) ---
@@ -50,6 +49,19 @@ void setRelay(int index, bool state) {
   }
 }
 
+// ฟังก์ชันอ่านค่า Boolean จาก JSON String โดยไม่ต้องใช้ไลบรารีภายนอก
+bool parseJsonBool(const String& json, const String& key) {
+  int keyIndex = json.indexOf("\"" + key + "\"");
+  if (keyIndex == -1) return false;
+  int colonIndex = json.indexOf(':', keyIndex);
+  if (colonIndex == -1) return false;
+
+  // หาคำว่า true หรือ 1 หลังเครื่องหมาย :
+  String sub = json.substring(colonIndex + 1, colonIndex + 8);
+  sub.trim();
+  return sub.startsWith("true") || sub.startsWith("1");
+}
+
 // ช่วงเวลาอัปเดต (มิลลิวินาที)
 unsigned long lastFetchTime = 0;
 const unsigned long fetchInterval = 1500; // ตรวจสอบคำสั่งสวิตช์ทุก 1.5 วินาที
@@ -76,22 +88,16 @@ void syncRelaysFromSupabase() {
     if (httpCode == HTTP_CODE_OK) {
       String payload = https.getString();
       
-      StaticJsonDocument<512> doc;
-      DeserializationError error = deserializeJson(doc, payload);
+      bool r1 = parseJsonBool(payload, "relay1");
+      bool r2 = parseJsonBool(payload, "relay2");
+      bool r3 = parseJsonBool(payload, "relay3");
+      bool r4 = parseJsonBool(payload, "relay4");
 
-      if (!error && doc.is<JsonArray>() && doc.size() > 0) {
-        JsonObject dev = doc[0];
-        bool r1 = dev["relay1"] | false;
-        bool r2 = dev["relay2"] | false;
-        bool r3 = dev["relay3"] | false;
-        bool r4 = dev["relay4"] | false;
-
-        // หากมีการเปลี่ยนสถานะ ให้สั่งงานทันที
-        if (r1 != relayStates[0]) { setRelay(0, r1); Serial.printf("[Cloud] Relay 1 -> %s\n", r1 ? "ON" : "OFF"); }
-        if (r2 != relayStates[1]) { setRelay(1, r2); Serial.printf("[Cloud] Relay 2 -> %s\n", r2 ? "ON" : "OFF"); }
-        if (r3 != relayStates[2]) { setRelay(2, r3); Serial.printf("[Cloud] Relay 3 -> %s\n", r3 ? "ON" : "OFF"); }
-        if (r4 != relayStates[3]) { setRelay(3, r4); Serial.printf("[Cloud] Relay 4 -> %s\n", r4 ? "ON" : "OFF"); }
-      }
+      // หากมีการเปลี่ยนสถานะ ให้สั่งงานทันที
+      if (r1 != relayStates[0]) { setRelay(0, r1); Serial.printf("[Cloud] Relay 1 -> %s\n", r1 ? "ON" : "OFF"); }
+      if (r2 != relayStates[1]) { setRelay(1, r2); Serial.printf("[Cloud] Relay 2 -> %s\n", r2 ? "ON" : "OFF"); }
+      if (r3 != relayStates[2]) { setRelay(2, r3); Serial.printf("[Cloud] Relay 3 -> %s\n", r3 ? "ON" : "OFF"); }
+      if (r4 != relayStates[3]) { setRelay(3, r4); Serial.printf("[Cloud] Relay 4 -> %s\n", r4 ? "ON" : "OFF"); }
     } else {
       Serial.printf("[Supabase] Sync Relays Error: HTTP %d\n", httpCode);
     }
@@ -99,7 +105,7 @@ void syncRelaysFromSupabase() {
   }
 }
 
-// ฟังก์ชันส่งค่าเซนเซอร์ขึ้นไปอัปเดตบน Supabase
+// ฟังก์ชันส่งค่าเซนเซอร์ขึ้นไปอัปเดตบน Supabase (สร้าง JSON String ตรงๆ ไม่ต้องพึ่งไลบรารี)
 void sendTelemetryToSupabase(float temp, float hum, int r, int g, int b, int c, String hexColor) {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -115,20 +121,17 @@ void sendTelemetryToSupabase(float temp, float hum, int r, int g, int b, int c, 
     https.addHeader("Content-Type", "application/json");
     https.addHeader("Prefer", "return=minimal");
 
-    // สร้าง JSON ส่งขึ้นไปอัปเดต
-    StaticJsonDocument<256> doc;
-    doc["temperature"] = temp;
-    doc["humidity"] = hum;
-    doc["color_r"] = r;
-    doc["color_g"] = g;
-    doc["color_b"] = b;
-    doc["color_c"] = c;
-    doc["color_hex"] = hexColor;
+    // สร้าง JSON String ตรงๆ ประหยัดแรมและไม่ต้องลงไลบรารีเพิ่ม
+    String body = "{";
+    body += "\"temperature\":" + String(temp, 1) + ",";
+    body += "\"humidity\":" + String(hum, 1) + ",";
+    body += "\"color_r\":" + String(r) + ",";
+    body += "\"color_g\":" + String(g) + ",";
+    body += "\"color_b\":" + String(b) + ",";
+    body += "\"color_c\":" + String(c) + ",";
+    body += "\"color_hex\":\"" + hexColor + "\"";
+    body += "}";
 
-    String body;
-    serializeJson(doc, body);
-
-    // ใช้ sendRequest("PATCH", ...) รองรับทุกเวอร์ชันของ ESP32
     int httpCode = https.sendRequest("PATCH", body);
     if (httpCode >= 200 && httpCode < 300) {
       Serial.printf("[Cloud] ส่งข้อมูลเซนเซอร์ขึ้น Supabase สำเร็จ (HTTP %d)\n", httpCode);
