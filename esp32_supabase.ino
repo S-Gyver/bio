@@ -26,7 +26,7 @@
 DHT dht(DHTPIN, DHTTYPE);
 
 // --- 1. การตั้งค่า WiFi ---
-const char* ssid = "Earth_Aoey_aey";
+const char* ssid = "Earth_Aoey_Aey";
 const char* password = "0894565410";
 
 // --- 2. การตั้งค่า Supabase Cloud ---
