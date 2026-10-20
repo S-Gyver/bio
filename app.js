@@ -171,8 +171,9 @@ function initApp() {
   renderColorSensor();
 
   // Setup Connection
+  setupPolling();
+
   if (state.isDemoMode) {
-    setupPolling();
     showToast('กำลังใช้งานในโหมดจำลอง (Demo) คุณสามารถทดสอบปุ่มและเซนเซอร์ได้ทันที', 'info', 4000);
   } else if (state.connMode === 'supabase' && state.supabaseUrl && state.supabaseKey) {
     initSupabaseClient();
@@ -203,7 +204,7 @@ function setConnectionTab(mode) {
   }
 
   if (mode === 'supabase') {
-    elements.syncModeLabel.textContent = 'Supabase Realtime (WebSockets)';
+    elements.syncModeLabel.textContent = 'Supabase Realtime (Sync 800ms)';
     if (!state.isDemoMode && !state.supabaseClient) initSupabaseClient();
   } else if (mode === 'mqtt') {
     elements.syncModeLabel.textContent = 'MQTT Cloud (50ms Super Realtime)';
@@ -211,6 +212,8 @@ function setConnectionTab(mode) {
   } else {
     elements.syncModeLabel.textContent = 'HTTP Fetch (Local LAN)';
   }
+
+  setupPolling();
 }
 
 // --- Event Listeners ---
@@ -315,7 +318,7 @@ function setupEventListeners() {
     vibrate(25);
     const icon = elements.cloudRefreshBtn.querySelector('.refresh-icon');
     if (icon) icon.classList.add('spinning');
-    await fetchSupabaseData();
+    await fetchSupabaseData(true);
     if (icon) icon.classList.remove('spinning');
   });
 
@@ -745,7 +748,8 @@ function initMqttClient() {
   }
 }
 
-async function fetchSupabaseData() {
+async function fetchSupabaseData(showNotification = false) {
+  if (!state.supabaseClient) getSupabaseClient();
   if (!state.supabaseClient) return;
   try {
     const { data, error } = await state.supabaseClient
@@ -756,7 +760,9 @@ async function fetchSupabaseData() {
 
     if (data && !error) {
       applyDeviceDataFromSupabase(data);
-      showToast('อัปเดตข้อมูลจาก Supabase Cloud เรียบร้อย', 'info');
+      if (showNotification) {
+        showToast('อัปเดตข้อมูลจาก Supabase Cloud เรียบร้อย', 'info');
+      }
     }
   } catch (err) {
     console.warn('Cloud fetch error:', err);
@@ -1140,15 +1146,18 @@ function simulateRandomFluctuation() {
 
 function setupPolling() {
   if (pollTimer) clearInterval(pollTimer);
+  const interval = (state.connMode === 'supabase') ? 800 : 2000;
   pollTimer = setInterval(() => {
     if (state.isDemoMode) {
       simulateRandomFluctuation();
       renderDHT();
       updateLastUpdatedTime();
+    } else if (state.connMode === 'supabase') {
+      fetchSupabaseData(false);
     } else if (state.connMode === 'local') {
       fetchLocalData();
     }
-  }, 2000);
+  }, interval);
 }
 
 // Helper to switch cleanly into Demo Mode
