@@ -163,21 +163,31 @@ bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex)
   Wire.requestFrom(TCS34725_ADDR, 8);
   if (Wire.available() < 8) return false;
 
-  uint16_t c = Wire.read() | (Wire.read() << 8);
-  uint16_t r = Wire.read() | (Wire.read() << 8);
-  uint16_t g = Wire.read() | (Wire.read() << 8);
-  uint16_t b = Wire.read() | (Wire.read() << 8);
+  uint8_t c_l = Wire.read(); uint8_t c_h = Wire.read();
+  uint8_t r_l = Wire.read(); uint8_t r_h = Wire.read();
+  uint8_t g_l = Wire.read(); uint8_t g_h = Wire.read();
+  uint8_t b_l = Wire.read(); uint8_t b_h = Wire.read();
+
+  uint16_t c = (c_h << 8) | c_l;
+  uint16_t r = (r_h << 8) | r_l;
+  uint16_t g = (g_h << 8) | g_l;
+  uint16_t b = (b_h << 8) | b_l;
 
   outC = c;
-  if (c <= 2) return false;
+  if (c == 0) return false;
 
-  float rf = ((float)r / (float)max((int)c, 1)) * 255.0;
-  float gf = ((float)g / (float)max((int)c, 1)) * 255.0;
-  float bf = ((float)b / (float)max((int)c, 1)) * 255.0;
+  float rf = (float)r / (float)c;
+  float gf = (float)g / (float)c;
+  float bf = (float)b / (float)c;
 
-  outR = constrain((int)rf, 0, 255);
-  outG = constrain((int)gf, 0, 255);
-  outB = constrain((int)bf, 0, 255);
+  float maxComp = max(rf, max(gf, bf));
+  if (maxComp > 0.0) {
+    outR = constrain((int)((rf / maxComp) * 255.0), 0, 255);
+    outG = constrain((int)((gf / maxComp) * 255.0), 0, 255);
+    outB = constrain((int)((bf / maxComp) * 255.0), 0, 255);
+  } else {
+    outR = 0; outG = 0; outB = 0;
+  }
 
   char hexBuf[10];
   snprintf(hexBuf, sizeof(hexBuf), "#%02X%02X%02X", outR, outG, outB);
@@ -399,7 +409,8 @@ void loop() {
     checkSwitchesFromSupabase();
   }
 
-  // 2. ตรวจสอบและส่งค่าสีขึ้น Cloud (ทุก 800ms หรือทันทีเมื่อนำสีใหม่มาจ่อ)
+  // 2. ตรวจสอบและส่งค่าสีขึ้น Cloud (ส่งเมื่อสีเปลี่ยน หรือส่ง Heartbeat ทุก 3 วินาที)
+  static unsigned long lastSupabaseColorSync = 0;
   if (now - lastColorCheck >= colorInterval) {
     lastColorCheck = now;
 
@@ -411,14 +422,29 @@ void loop() {
       int r = 0, g = 0, b = 0, c = 0;
       String hex = "";
       if (readColorSensor(r, g, b, c, hex)) {
-        // ถ้าค่าสีเปลี่ยนเกินกว่า 6 ระดับ (มีการเปลี่ยนวัตถุ) หรือยังไม่เคยส่ง ให้ส่งขึ้นทันที
-        if (abs(r - lastSentR) > 6 || abs(g - lastSentG) > 6 || abs(b - lastSentB) > 6) {
+        bool colorChanged = (lastSentR == -999 || abs(r - lastSentR) > 4 || abs(g - lastSentG) > 4 || abs(b - lastSentB) > 4);
+        bool heartbeatDue = (now - lastSupabaseColorSync >= 3000);
+
+        if (colorChanged || heartbeatDue) {
           lastSentR = r;
           lastSentG = g;
           lastSentB = b;
+          lastSupabaseColorSync = now;
           sendColorToSupabase(r, g, b, c, hex);
-          Serial.printf("[Turbo Color] สีเปลี่ยน -> %s (R:%d G:%d B:%d)\n", hex.c_str(), r, g, b);
+          Serial.printf("[Color Sensor] สี -> %s (R:%d G:%d B:%d Clear:%d)\n", hex.c_str(), r, g, b, c);
         }
+      } else {
+        static unsigned long lastWarn = 0;
+        if (now - lastWarn > 5000) {
+          lastWarn = now;
+          Serial.println("⚠️ [TCS34725] อ่านค่าไม่ได้ (อาจมืดเกินไป หรือไฟ LED ดับ หรือสาย I2C หลวม)");
+        }
+      }
+    } else {
+      static unsigned long lastWarnFind = 0;
+      if (now - lastWarnFind > 5000) {
+        lastWarnFind = now;
+        Serial.println("❌ ไม่พบเซนเซอร์ TCS34725 กรุณาตรวจสาย SDA(21), SCL(22), 3.3V, GND");
       }
     }
   }
