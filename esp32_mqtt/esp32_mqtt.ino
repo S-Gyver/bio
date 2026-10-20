@@ -278,29 +278,39 @@ bool initTCS34725() {
   return true;
 }
 
-bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex) {
+uint16_t readTCS16(uint8_t reg) {
   Wire.beginTransmission(TCS34725_ADDR);
-  Wire.write(0xA0 | 0x14);
-  if (Wire.endTransmission() != 0) return false;
+  Wire.write(0x80 | reg);
+  if (Wire.endTransmission() != 0) return 0;
 
-  Wire.requestFrom(TCS34725_ADDR, 8);
-  if (Wire.available() < 8) return false;
+  Wire.requestFrom((uint8_t)TCS34725_ADDR, (uint8_t)2);
+  if (Wire.available() < 2) return 0;
+  uint8_t low = Wire.read();
+  uint8_t high = Wire.read();
+  return ((uint16_t)high << 8) | low;
+}
 
-  uint16_t c = Wire.read() | (Wire.read() << 8);
-  uint16_t r = Wire.read() | (Wire.read() << 8);
-  uint16_t g = Wire.read() | (Wire.read() << 8);
-  uint16_t b = Wire.read() | (Wire.read() << 8);
+bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex) {
+  uint16_t c = readTCS16(0x14); // CDATAL
+  uint16_t r = readTCS16(0x16); // RDATAL
+  uint16_t g = readTCS16(0x18); // GDATAL
+  uint16_t b = readTCS16(0x1A); // BDATAL
 
   outC = c;
-  if (c <= 2) return false;
+  if (c == 0) return false;
 
-  float rf = ((float)r / (float)max((int)c, 1)) * 255.0;
-  float gf = ((float)g / (float)max((int)c, 1)) * 255.0;
-  float bf = ((float)b / (float)max((int)c, 1)) * 255.0;
+  float rf = (float)r / (float)c;
+  float gf = (float)g / (float)c;
+  float bf = (float)b / (float)c;
 
-  outR = constrain((int)rf, 0, 255);
-  outG = constrain((int)gf, 0, 255);
-  outB = constrain((int)bf, 0, 255);
+  float maxComp = max(rf, max(gf, bf));
+  if (maxComp > 0.0) {
+    outR = constrain((int)((rf / maxComp) * 255.0), 0, 255);
+    outG = constrain((int)((gf / maxComp) * 255.0), 0, 255);
+    outB = constrain((int)((bf / maxComp) * 255.0), 0, 255);
+  } else {
+    outR = 0; outG = 0; outB = 0;
+  }
 
   char hexBuf[10];
   snprintf(hexBuf, sizeof(hexBuf), "#%02X%02X%02X", outR, outG, outB);

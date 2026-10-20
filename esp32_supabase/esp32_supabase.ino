@@ -152,26 +152,26 @@ bool initTCS34725() {
   return true;
 }
 
+uint16_t readTCS16(uint8_t reg) {
+  Wire.beginTransmission(TCS34725_ADDR);
+  Wire.write(0x80 | reg);
+  if (Wire.endTransmission() != 0) return 0;
+
+  Wire.requestFrom((uint8_t)TCS34725_ADDR, (uint8_t)2);
+  if (Wire.available() < 2) return 0;
+  uint8_t low = Wire.read();
+  uint8_t high = Wire.read();
+  return ((uint16_t)high << 8) | low;
+}
+
 // -------------------------------------------------------------
-// อ่านค่าสีจาก TCS34725
+// อ่านค่าสีจาก TCS34725 (แบบมาตรฐาน Adafruit 100%)
 // -------------------------------------------------------------
 bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex) {
-  Wire.beginTransmission(TCS34725_ADDR);
-  Wire.write(0xA0 | 0x14); // Auto-increment read
-  if (Wire.endTransmission() != 0) return false;
-
-  Wire.requestFrom(TCS34725_ADDR, 8);
-  if (Wire.available() < 8) return false;
-
-  uint8_t c_l = Wire.read(); uint8_t c_h = Wire.read();
-  uint8_t r_l = Wire.read(); uint8_t r_h = Wire.read();
-  uint8_t g_l = Wire.read(); uint8_t g_h = Wire.read();
-  uint8_t b_l = Wire.read(); uint8_t b_h = Wire.read();
-
-  uint16_t c = (c_h << 8) | c_l;
-  uint16_t r = (r_h << 8) | r_l;
-  uint16_t g = (g_h << 8) | g_l;
-  uint16_t b = (b_h << 8) | b_l;
+  uint16_t c = readTCS16(0x14); // CDATAL
+  uint16_t r = readTCS16(0x16); // RDATAL
+  uint16_t g = readTCS16(0x18); // GDATAL
+  uint16_t b = readTCS16(0x1A); // BDATAL
 
   outC = c;
   if (c == 0) return false;
