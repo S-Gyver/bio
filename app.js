@@ -197,12 +197,9 @@ function setConnectionTab(mode) {
   if (elements.panelMqtt) elements.panelMqtt.style.display = mode === 'mqtt' ? 'block' : 'none';
   elements.panelLocal.style.display = mode === 'local' ? 'block' : 'none';
 
-  // If leaving Supabase mode, disconnect realtime listener so it never interferes with MQTT
-  if (mode !== 'supabase' && state.supabaseClient && state.realtimeChannel) {
-    try {
-      state.supabaseClient.removeChannel(state.realtimeChannel);
-      state.realtimeChannel = null;
-    } catch (e) {}
+  // Retain background Supabase sync if credentials exist
+  if (state.supabaseUrl && state.supabaseKey && !state.supabaseClient) {
+    getSupabaseClient();
   }
 
   if (mode === 'supabase') {
@@ -678,19 +675,14 @@ function initMqttClient() {
           }
           if (dhtChanged) renderDHT();
 
-          // 3. Color Sensor Sync (only render if RGB values shifted)
+          // 3. Color Sensor Sync (always update live color immediately)
           if (data.color) {
-            const r = data.color.r ?? state.color.r;
-            const g = data.color.g ?? state.color.g;
-            const b = data.color.b ?? state.color.b;
-            if (r !== state.color.r || g !== state.color.g || b !== state.color.b) {
-              state.color.r = r;
-              state.color.g = g;
-              state.color.b = b;
-              state.color.c = data.color.c ?? state.color.c;
-              state.color.hex = data.color.hex || rgbToHex(r, g, b);
-              renderColorSensor();
-            }
+            state.color.r = data.color.r ?? state.color.r;
+            state.color.g = data.color.g ?? state.color.g;
+            state.color.b = data.color.b ?? state.color.b;
+            state.color.c = data.color.c ?? state.color.c;
+            state.color.hex = data.color.hex || rgbToHex(state.color.r, state.color.g, state.color.b);
+            renderColorSensor();
           }
 
           // 4. White LED Sync (with lockout)
@@ -772,42 +764,49 @@ async function fetchSupabaseData() {
 }
 
 function applyDeviceDataFromSupabase(dev) {
-  // If user is operating in MQTT mode, do NOT let Supabase overwrite the live MQTT state
-  if (state.connMode === 'mqtt') return;
+  const now = Date.now();
+  const isMqttMode = state.connMode === 'mqtt';
 
-  state.relays = [
-    Boolean(dev.relay1),
-    Boolean(dev.relay2),
-    Boolean(dev.relay3),
-    Boolean(dev.relay4)
-  ];
-  renderRelays();
+  // Relays sync with lockout guard
+  let relaysChanged = false;
+  [dev.relay1, dev.relay2, dev.relay3, dev.relay4].forEach((val, idx) => {
+    if (!isMqttMode || (now - lastUserRelayActionTime[idx] >= 1500)) {
+      const b = Boolean(val);
+      if (state.relays[idx] !== b) {
+        state.relays[idx] = b;
+        relaysChanged = true;
+      }
+    }
+  });
+  if (relaysChanged) renderRelays();
 
   if (typeof dev.temperature === 'number') state.dht.temp = Number(dev.temperature);
   if (typeof dev.humidity === 'number') state.dht.hum = Number(dev.humidity);
   renderDHT();
 
-  if (dev.color_r !== undefined) {
-    state.color.r = dev.color_r;
-    state.color.g = dev.color_g;
-    state.color.b = dev.color_b;
+  if (dev.color_r !== undefined && dev.color_r !== null) {
+    state.color.r = Number(dev.color_r);
+    state.color.g = Number(dev.color_g);
+    state.color.b = Number(dev.color_b);
     state.color.c = dev.color_c || 1200;
-    state.color.hex = dev.color_hex || rgbToHex(dev.color_r, dev.color_g, dev.color_b);
+    state.color.hex = dev.color_hex || rgbToHex(state.color.r, state.color.g, state.color.b);
     renderColorSensor();
   }
 
   // Sync Sensor White LED state
-  if (dev.name === 'led_off') {
-    state.sensorLed = false;
-  } else if (dev.name === 'led_on') {
-    state.sensorLed = true;
-  }
-  if (elements.sensorLedToggle) {
-    elements.sensorLedToggle.checked = state.sensorLed;
-  }
-  if (elements.sensorLedStatusText) {
-    elements.sensorLedStatusText.textContent = state.sensorLed ? 'เปิด' : 'ปิด';
-    elements.sensorLedStatusText.style.color = state.sensorLed ? '#3b82f6' : '#94a3b8';
+  if (!isMqttMode || (now - lastUserLedActionTime >= 1500)) {
+    if (dev.name === 'led_off') {
+      state.sensorLed = false;
+    } else if (dev.name === 'led_on') {
+      state.sensorLed = true;
+    }
+    if (elements.sensorLedToggle) {
+      elements.sensorLedToggle.checked = state.sensorLed;
+    }
+    if (elements.sensorLedStatusText) {
+      elements.sensorLedStatusText.textContent = state.sensorLed ? 'เปิด' : 'ปิด';
+      elements.sensorLedStatusText.style.color = state.sensorLed ? '#3b82f6' : '#94a3b8';
+    }
   }
 
   updateLastUpdatedTime();

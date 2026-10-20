@@ -169,11 +169,11 @@ bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex)
   uint16_t b = Wire.read() | (Wire.read() << 8);
 
   outC = c;
-  if (c <= 10) return false;
+  if (c <= 2) return false;
 
-  float rf = ((float)r / (float)c) * 255.0;
-  float gf = ((float)g / (float)c) * 255.0;
-  float bf = ((float)b / (float)c) * 255.0;
+  float rf = ((float)r / (float)max((int)c, 1)) * 255.0;
+  float gf = ((float)g / (float)max((int)c, 1)) * 255.0;
+  float bf = ((float)b / (float)max((int)c, 1)) * 255.0;
 
   outR = constrain((int)rf, 0, 255);
   outG = constrain((int)gf, 0, 255);

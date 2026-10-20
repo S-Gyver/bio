@@ -292,11 +292,11 @@ bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex)
   uint16_t b = Wire.read() | (Wire.read() << 8);
 
   outC = c;
-  if (c <= 10) return false;
+  if (c <= 2) return false;
 
-  float rf = ((float)r / (float)c) * 255.0;
-  float gf = ((float)g / (float)c) * 255.0;
-  float bf = ((float)b / (float)c) * 255.0;
+  float rf = ((float)r / (float)max((int)c, 1)) * 255.0;
+  float gf = ((float)g / (float)max((int)c, 1)) * 255.0;
+  float bf = ((float)b / (float)max((int)c, 1)) * 255.0;
 
   outR = constrain((int)rf, 0, 255);
   outG = constrain((int)gf, 0, 255);
@@ -351,7 +351,7 @@ bool readDHTSensor(int pin, float &temp, float &hum, bool is22) {
 // 6. ส่งสถานะทั้งหมดขึ้น MQTT (Realtime 50ms)
 // -------------------------------------------------------------
 float currentTemp = 28.5, currentHum = 60.0;
-int curR = 59, curG = 130, curB = 246, curC = 1200;
+int curR = -999, curG = -999, curB = -999, curC = 0;
 String curHex = "#3B82F6";
 
 void publishAllSensors() {
@@ -363,7 +363,7 @@ void publishAllSensors() {
   json += "\"temp\":" + String(currentTemp, 1) + ",";
   json += "\"hum\":" + String(currentHum, 1) + ",";
   json += "\"led\":" + String(colorLedState ? "true" : "false") + ",";
-  json += "\"color\":{\"r\":" + String(curR) + ",\"g\":" + String(curG) + ",\"b\":" + String(curB) + ",\"c\":" + String(curC) + ",\"hex\":\"" + curHex + "\"}";
+  json += "\"color\":{\"r\":" + String(curR >= 0 ? curR : 59) + ",\"g\":" + String(curG >= 0 ? curG : 130) + ",\"b\":" + String(curB >= 0 ? curB : 246) + ",\"c\":" + String(curC) + ",\"hex\":\"" + curHex + "\"}";
   json += "}";
 
   mqtt.publish(topicSensors, json.c_str());
@@ -418,6 +418,7 @@ void onMqttCommand(char* topic, uint8_t* payload, unsigned int length) {
 // -------------------------------------------------------------
 unsigned long lastColorSample = 0;
 unsigned long lastDhtSample = 0;
+static unsigned long lastHeartbeat = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -432,8 +433,24 @@ void setup() {
   for (int i = 0; i < 4; i++) setRelay(i, false);
   setColorLed(true);
 
+  // I2C Scanner
+  Wire.begin(21, 22);
+  Serial.println("[I2C Scanner] สแกนหาอุปกรณ์ I2C (SDA=21, SCL=22)...");
+  int foundCount = 0;
+  for (byte addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("  -> พบอุปกรณ์ I2C ที่ Address 0x%02X\n", addr);
+      foundCount++;
+    }
+  }
+  if (foundCount == 0) {
+    Serial.println("⚠️ ไม่พบอุปกรณ์ I2C ใดๆ! ตรวจสอบสาย SDA(21), SCL(22), 3.3V, GND");
+  }
+
   tcsFound = initTCS34725();
   if (tcsFound) Serial.println("✅ เซนเซอร์ตรวจจับสี TCS34725 พร้อมทำงาน!");
+  else Serial.println("⚠️ ยังไม่พบ TCS34725 จะพยายามเชื่อมต่อใหม่เรื่อยๆ ใน loop");
 
   Serial.print("กำลังเชื่อมต่อ WiFi: ");
   Serial.println(ssid);
@@ -472,8 +489,8 @@ void loop() {
 
   unsigned long now = millis();
 
-  // 1. ตรวจจับสีแบบความเร็วสูง (ตรวจทุก 150ms สตรีมค่าเมื่อสีเปลี่ยนจริง เกิน Noise Threshold)
-  if (now - lastColorSample >= 150) {
+  // 1. ตรวจจับสี (ตรวจทุก 120ms สตรีมค่าเมื่อสีเปลี่ยน หรือส่งเป็นระยะทุก 2 วินาที)
+  if (now - lastColorSample >= 120) {
     lastColorSample = now;
     if (!tcsFound) tcsFound = initTCS34725();
 
@@ -481,11 +498,15 @@ void loop() {
       int r = 0, g = 0, b = 0, c = 0;
       String hex = "";
       if (readColorSensor(r, g, b, c, hex)) {
-        // หากสีเปลี่ยนจริงเกินเกณฑ์ Noise (8 ค่า) สตรีมขึ้นเว็บทันทีใน 50ms
-        if (abs(r - curR) > 8 || abs(g - curG) > 8 || abs(b - curB) > 8) {
+        bool colorChanged = (curR == -999 || abs(r - curR) > 4 || abs(g - curG) > 4 || abs(b - curB) > 4);
+        bool heartbeatDue = (now - lastHeartbeat >= 2000);
+        if (colorChanged || heartbeatDue) {
           curR = r; curG = g; curB = b; curC = c; curHex = hex;
+          lastHeartbeat = now;
           publishAllSensors();
-          Serial.printf("🎨 [Live Color Stream 50ms] -> %s (R:%d G:%d B:%d)\n", hex.c_str(), r, g, b);
+          if (colorChanged) {
+            Serial.printf("🎨 [Live Color Stream 50ms] -> %s (R:%d G:%d B:%d Clear:%d)\n", hex.c_str(), r, g, b, c);
+          }
         }
       }
     }
