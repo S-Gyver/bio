@@ -425,7 +425,9 @@ function setupEventListeners() {
         state.mqttClient.publish(`${state.mqttTopic}/commands`, JSON.stringify({
           led: isChecked
         }));
-        showToast(`⚡ [MQTT 50ms] ไฟ LED: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success');
+        // Hybrid Auto-Sync to Supabase table
+        syncToSupabase({ name: isChecked ? 'led_on' : 'led_off' }, 0);
+        showToast(`⚡ [MQTT 50ms + ☁️ บันทึกตาราง] ไฟ LED: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success');
         return;
       }
 
@@ -542,6 +544,55 @@ async function initSupabaseClient() {
   }
 }
 
+// --- Hybrid Supabase Table Auto-Sync Helper ---
+function getSupabaseClient() {
+  if (state.supabaseClient) return state.supabaseClient;
+  if (typeof window.supabase !== 'undefined' && window.supabase.createClient && state.supabaseUrl && state.supabaseKey) {
+    try {
+      state.supabaseClient = window.supabase.createClient(state.supabaseUrl, state.supabaseKey);
+      return state.supabaseClient;
+    } catch (e) {
+      console.warn('Failed to init Supabase client:', e);
+    }
+  }
+  return null;
+}
+
+let pendingSyncTimeout = null;
+let pendingSyncData = {};
+
+function syncToSupabase(data, debounceMs = 0) {
+  if (state.isDemoMode) return;
+  const client = getSupabaseClient();
+  if (!client) return;
+
+  Object.assign(pendingSyncData, data);
+
+  if (debounceMs === 0) {
+    if (pendingSyncTimeout) {
+      clearTimeout(pendingSyncTimeout);
+      pendingSyncTimeout = null;
+    }
+    const toSend = { ...pendingSyncData, updated_at: new Date().toISOString() };
+    pendingSyncData = {};
+    client.from('esp32_devices').update(toSend).eq('id', 1).then(({ error }) => {
+      if (error) console.warn('[Supabase Auto-Sync Error]', error.message);
+      else console.log('[Supabase Auto-Synced to Table]', toSend);
+    }).catch(err => console.warn('[Supabase Auto-Sync Exception]', err));
+  } else {
+    if (pendingSyncTimeout) clearTimeout(pendingSyncTimeout);
+    pendingSyncTimeout = setTimeout(() => {
+      pendingSyncTimeout = null;
+      const toSend = { ...pendingSyncData, updated_at: new Date().toISOString() };
+      pendingSyncData = {};
+      client.from('esp32_devices').update(toSend).eq('id', 1).then(({ error }) => {
+        if (error) console.warn('[Supabase Debounced Sync Error]', error.message);
+        else console.log('[Supabase Debounced Synced to Table]', toSend);
+      }).catch(err => console.warn('[Supabase Debounced Sync Exception]', err));
+    }, debounceMs);
+  }
+}
+
 // --- MQTT Realtime Client (50ms Super Realtime) ---
 function initMqttClient() {
   if (typeof mqtt === 'undefined') {
@@ -607,12 +658,32 @@ function initMqttClient() {
             }
           }
 
+          // Hybrid Auto-Sync Telemetry to Supabase Table in background (debounced 2.5s)
+          syncToSupabase({
+            temperature: state.dht.temp,
+            humidity: state.dht.hum,
+            color_r: state.color.r,
+            color_g: state.color.g,
+            color_b: state.color.b,
+            color_c: state.color.c,
+            color_hex: state.color.hex,
+            relay1: state.relays[0],
+            relay2: state.relays[1],
+            relay3: state.relays[2],
+            relay4: state.relays[3]
+          }, 2500);
+
           updateLastUpdatedTime();
         }
       } catch (err) {
         console.error('MQTT message error:', err);
       }
     });
+
+    // Also fetch last saved state from Supabase table to pre-populate dashboard immediately
+    if (state.supabaseUrl && state.supabaseKey) {
+      fetchSupabaseData();
+    }
 
     client.on('error', (err) => {
       console.warn('MQTT Connection Error:', err);
@@ -708,7 +779,9 @@ async function handleRelayToggle(channel, targetState) {
       relay: channel,
       state: targetState
     }));
-    showToast(`⚡ [MQTT 50ms] Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success');
+    // Hybrid Auto-Sync to Supabase table
+    syncToSupabase({ [`relay${channel}`]: targetState }, 0);
+    showToast(`⚡ [MQTT 50ms + ☁️ บันทึกตาราง] Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success');
     return;
   }
 
@@ -763,7 +836,14 @@ async function handleMasterAll(targetState) {
     state.mqttClient.publish(`${state.mqttTopic}/commands`, JSON.stringify({
       master: targetState
     }));
-    showToast(`⚡ [MQTT 50ms] สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมดเรียบร้อย`, 'success');
+    // Hybrid Auto-Sync all relays to Supabase table
+    syncToSupabase({
+      relay1: targetState,
+      relay2: targetState,
+      relay3: targetState,
+      relay4: targetState
+    }, 0);
+    showToast(`⚡ [MQTT 50ms + ☁️ บันทึกตาราง] สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมดเรียบร้อย`, 'success');
     return;
   }
 
