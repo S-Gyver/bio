@@ -3,33 +3,11 @@
  * ESP32 Complete IoT Controller - Supabase Cloud (Fixed Color Overwrite)
  * 4-Channel Relays + DHT Temp/Humidity + TCS34725 Color Sensor
  * =========================================================================
- * 
- * 1. Relay 4 ช่อง (Active LOW แบบ Open-Drain ปลอดภัย ตัดวงจร 100%):
- *    - IN 1 : GPIO 16 (สวิตช์ 1)
- *    - IN 2 : GPIO 17 (สวิตช์ 2)
- *    - IN 3 : GPIO 18 (สวิตช์ 3)
- *    - IN 4 : GPIO 19 (สวิตช์ 4)
- *    - VCC  : 3.3V หรือ 5V (VIN)
- *    - GND  : GND ของ ESP32
- * 
- * 2. เซนเซอร์วัดอุณหภูมิและความชื้น (DHT11 / DHT22):
- *    - ขา + (VCC) : 3.3V
- *    - ขา - (GND) : GND
- *    - ขา OUT     : GPIO 4
- * 
- * 3. เซนเซอร์ตรวจจับสี (TCS34725 I2C Color Sensor):
- *    - ขา VIN / VCC : 3.3V
- *    - ขา GND       : GND
- *    - ขา SDA       : GPIO 21
- *    - ขา SCL       : GPIO 22
- *    - ขา LED       : ต่อ 3.3V เพื่อเปิดไฟส่องวัตถุ (สำคัญมากสำหรับการสะท้อนสี)
- * 
- * =========================================================================
- * การแก้ไข: 
- * - เพิ่ม Auto-Increment 0xA0 ในการอ่าน TCS34725 เพื่อให้อ่านค่าสี RGB ครบทุกช่อง
- * - เพิ่ม Delay ตาม Datasheet (PON 3ms, AEN 60ms)
- * - หากยังไม่ได้ต่อเซนเซอร์สี หรือแสงไม่พอ (c <= 10) จะ "ไม่ส่งค่าสีดำ #000000 ไปทับ" 
- *   ทำให้หน้าเว็บไม่ถูกเปลี่ยนเป็นสีดำ!
+ * 1. Relay 4 ช่อง: GPIO 16, 17, 18, 19 (Open-Drain ตัดวงจร 100%)
+ * 2. เซนเซอร์วัดอุณหภูมิ (DHT): OUT -> GPIO 4, VCC -> 3.3V, GND -> GND
+ * 3. เซนเซอร์ตรวจจับสี (TCS34725): 
+ *    - SDA -> GPIO 21, SCL -> GPIO 22, VCC -> 3.3V, GND -> GND
+ *    - ขา LED -> ต่อเข้า 3.3V เพื่อเปิดไฟส่องวัตถุ
  * =========================================================================
  */
 
@@ -54,14 +32,12 @@ const char* password = "0894565410";
 const char* supabaseUrl = "https://igiihteeeprpcxxlldkd.supabase.co";
 const char* supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlnaWlodGVlZXBycGN4eGxsZGtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODkwNzksImV4cCI6MjEwMDU2NTA3OX0.fr8_ZAYKQ3D-JgEtAWGJnNvKjoUmYxs1T7tjzzsEltw";
 
-// ตัวแปรช่วงเวลาการทำงาน
 unsigned long lastRelayCheck = 0;
 const unsigned long relayInterval = 1000;      // ตรวจสอบสวิตช์ทุก 1 วินาที
 
 unsigned long lastTelemetryCheck = 0;
 const unsigned long telemetryInterval = 4000;  // ส่งค่าเซนเซอร์ขึ้น Cloud ทุก 4 วินาที
 
-// ตัวแปรสถานะเซนเซอร์สี TCS34725 (I2C Addr: 0x29)
 #define TCS34725_ADDR 0x29
 bool tcsFound = false;
 
@@ -105,58 +81,47 @@ void scanI2C() {
     }
   }
   if (nDevices == 0) {
-    Serial.println(">>> [I2C] ไม่พบอุปกรณ์ I2C (ตรวจสอบสาย 3.3V, GND, SDA=21, SCL=22)");
+    Serial.println(">>> [I2C] ยังไม่พบอุปกรณ์ I2C (ตรวจสอบสาย 3.3V, GND, SDA=21, SCL=22)");
   }
 }
 
 // -------------------------------------------------------------
-// ไดรเวอร์เริ่มต้นเซนเซอร์สี TCS34725
+// เริ่มต้นเซนเซอร์สี TCS34725
 // -------------------------------------------------------------
 bool initTCS34725() {
   Wire.begin(21, 22); // SDA = GPIO 21, SCL = GPIO 22
   Wire.setClock(100000);
 
-  // เช็คว่ามีอุปกรณ์ที่ I2C Address 0x29 หรือไม่
   Wire.beginTransmission(TCS34725_ADDR);
   if (Wire.endTransmission() != 0) {
     return false;
   }
 
-  // อ่าน ID register (0x80 | 0x12)
+  // ตั้งค่า ATIME (50ms)
   Wire.beginTransmission(TCS34725_ADDR);
-  Wire.write(0x80 | 0x12);
-  Wire.endTransmission();
-  Wire.requestFrom(TCS34725_ADDR, 1);
-  if (Wire.available()) {
-    uint8_t id = Wire.read();
-    Serial.printf("[TCS34725] พบชิปเซนเซอร์สี ID: 0x%02X\n", id);
-  }
-
-  // 1. ตั้งค่าเวลา Integration Time (0xEB = 50ms)
-  Wire.beginTransmission(TCS34725_ADDR);
-  Wire.write(0x80 | 0x01); // ATIME
+  Wire.write(0x80 | 0x01);
   Wire.write(0xEB);
   Wire.endTransmission();
 
-  // 2. ตั้งค่า Gain (0x01 = 4x Gain)
+  // ตั้งค่า Gain (4x)
   Wire.beginTransmission(TCS34725_ADDR);
-  Wire.write(0x80 | 0x0F); // CONTROL
+  Wire.write(0x80 | 0x0F);
   Wire.write(0x01);
   Wire.endTransmission();
 
-  // 3. สั่งเปิด Power ON (PON 0x01)
+  // Power ON (PON)
   Wire.beginTransmission(TCS34725_ADDR);
-  Wire.write(0x80 | 0x00); // ENABLE
-  Wire.write(0x01);        // PON
+  Wire.write(0x80 | 0x00);
+  Wire.write(0x01);
   Wire.endTransmission();
-  delay(3);                // รอ 3ms ตาม Datasheet
+  delay(3);
 
-  // 4. สั่งเปิด RGBC Enable (AEN 0x02)
+  // RGBC Enable (PON | AEN)
   Wire.beginTransmission(TCS34725_ADDR);
-  Wire.write(0x80 | 0x00); // ENABLE
-  Wire.write(0x03);        // PON | AEN
+  Wire.write(0x80 | 0x00);
+  Wire.write(0x03);
   Wire.endTransmission();
-  delay(60);               // รอให้ ADC แปลงสัญญาณรอบแรกเสร็จสมบูรณ์
+  delay(60);
 
   return true;
 }
@@ -165,9 +130,9 @@ bool initTCS34725() {
 // อ่านค่าสีจาก TCS34725
 // -------------------------------------------------------------
 bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex) {
-  // สั่งอ่าน Multi-byte ด้วย Auto-Increment (0xA0 = 0x80 | 0x20)
+  // สั่งอ่านแบบ Auto-Increment (0xA0)
   Wire.beginTransmission(TCS34725_ADDR);
-  Wire.write(0xA0 | 0x14); // CDATAL register with auto-increment
+  Wire.write(0xA0 | 0x14); // CDATAL register
   if (Wire.endTransmission() != 0) return false;
 
   Wire.requestFrom(TCS34725_ADDR, 8);
@@ -180,12 +145,12 @@ bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex)
 
   outC = c;
 
-  // หากไม่มีแสง หรือไม่ได้ต่อเซนเซอร์ (c <= 10) จะไม่ถือว่าได้สีที่ถูกต้อง
+  // หากไม่มีแสง หรือยังไม่ได้ต่อเซนเซอร์ จะไม่ถือว่าได้สีที่ถูกต้อง
   if (c <= 10) {
     return false;
   }
 
-  // คำนวณ RGB 0-255 จากสัดส่วนแสง
+  // คำนวณสัดส่วนสี RGB 0-255
   float rf = ((float)r / (float)c) * 255.0;
   float gf = ((float)g / (float)c) * 255.0;
   float bf = ((float)b / (float)c) * 255.0;
@@ -202,7 +167,7 @@ bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex)
 }
 
 // -------------------------------------------------------------
-// ไดรเวอร์อ่านเซนเซอร์ DHT11 / DHT22 (ในตัว ไม่ต้องลง Library)
+// อ่านค่า DHT11 / DHT22 (ในตัว ไม่ต้องลง Library)
 // -------------------------------------------------------------
 bool readDHTSensor(int pin, float &temp, float &hum, bool is22) {
   uint8_t data[5] = {0, 0, 0, 0, 0};
@@ -299,7 +264,7 @@ void checkSwitchesFromSupabase() {
 }
 
 // -------------------------------------------------------------
-// ส่งค่า Telemetry ขึ้น Supabase (ส่งสีเฉพาะเมื่ออ่านได้จริง ไม่ส่งสีดำไปทับ!)
+// ส่งข้อมูลขึ้น Supabase (ส่งสีเฉพาะเมื่ออ่านได้จริง)
 // -------------------------------------------------------------
 void sendTelemetryToSupabase(float temp, float hum, bool hasColor, int r, int g, int b, int c, const String& hex) {
   if (WiFi.status() != WL_CONNECTED) return;
@@ -320,14 +285,12 @@ void sendTelemetryToSupabase(float temp, float hum, bool hasColor, int r, int g,
     String jsonBody = "{";
     bool hasField = false;
 
-    // ส่งค่าอุณหภูมิและความชื้นถ้าอ่านได้
     if (temp > 0.0 || hum > 0.0) {
       jsonBody += "\"temperature\":" + String(temp, 1) + ",\"humidity\":" + String(hum, 1);
       hasField = true;
     }
 
-    // *** จุดสำคัญ: ส่งสีเฉพาะเมื่ออ่านค่าแสงได้จริง (hasColor && c > 10) เท่านั้น ***
-    // จะไม่ส่งสีดำ #000000 ไปทับเมื่อเซนเซอร์สียังไม่ได้เสียบ
+    // *** ส่งสีเฉพาะเมื่อมีเซนเซอร์และแสงสะท้อนจริง (c > 10) ***
     if (hasColor && c > 10) {
       if (hasField) jsonBody += ",";
       jsonBody += "\"color_r\":" + String(r) + 
@@ -344,13 +307,10 @@ void sendTelemetryToSupabase(float temp, float hum, bool hasColor, int r, int g,
       int httpCode = https.PATCH(jsonBody);
       if (httpCode >= 200 && httpCode < 300) {
         if (hasColor && c > 10) {
-          Serial.printf("[Cloud Sync] อุณหภูมิ: %.1f°C | สี: %s (R:%d G:%d B:%d C:%d) สำเร็จ\n", 
-                        temp, hex.c_str(), r, g, b, c);
+          Serial.printf("[Cloud Sync] อุณหภูมิ: %.1f°C | สี: %s สำเร็จ\n", temp, hex.c_str());
         } else {
           Serial.printf("[Cloud Sync] อุณหภูมิ: %.1f°C, ความชื้น: %.1f%% สำเร็จ\n", temp, hum);
         }
-      } else {
-        Serial.printf("[Cloud Sync] อัปเดตไม่สำเร็จ HTTP: %d\n", httpCode);
       }
     }
 
@@ -363,12 +323,8 @@ void setup() {
   delay(1000);
   Serial.println("\n=======================================================");
   Serial.println(" ESP32 Full IoT Controller (Relays + DHT + TCS34725) ");
-  Serial.println(" ขารีเลย์: 16 (CH1), 17 (CH2), 18 (CH3), 19 (CH4) ");
-  Serial.println(" ขา DHT อุณหภูมิ: GPIO 4 ");
-  Serial.println(" ขา เซนเซอร์สี: SDA=GPIO 21, SCL=GPIO 22 ");
   Serial.println("=======================================================");
 
-  // สั่งปิดรีเลย์ทุกช่องไว้ก่อน
   for (int i = 0; i < 4; i++) {
     setRelay(i, false);
   }
@@ -376,12 +332,12 @@ void setup() {
   // ตรวจหาสาย I2C
   scanI2C();
 
-  // เริ่มต้นเซนเซอร์ตรวจจับสี TCS34725
+  // เริ่มต้นเซนเซอร์ตรวจจับสี
   tcsFound = initTCS34725();
   if (tcsFound) {
     Serial.println("✅ ตรวจพบเซนเซอร์ตรวจจับสี TCS34725 พร้อมทำงาน!");
   } else {
-    Serial.println("⚠️ ยังไม่พบเซนเซอร์สี TCS34725 (เช็คสาย SDA=21, SCL=22, 3.3V, GND)");
+    Serial.println("⚠️ ยังไม่พบเซนเซอร์สี (เช็คสาย SDA=21, SCL=22, 3.3V, GND)");
   }
 
   // เชื่อมต่อ WiFi
@@ -398,33 +354,29 @@ void setup() {
   Serial.println("\nWiFi Connected successfully!");
   Serial.print("ESP32 IP: ");
   Serial.println(WiFi.localIP());
-  Serial.println("ระบบพร้อมทำงาน 100%!");
 }
 
 void loop() {
   unsigned long now = millis();
 
-  // 1. ตรวจสอบสวิตช์รีเลย์จาก Cloud ทุก 1 วินาที
+  // 1. ตรวจสอบสวิตช์รีเลย์ทุก 1 วินาที
   if (now - lastRelayCheck >= relayInterval) {
     lastRelayCheck = now;
     checkSwitchesFromSupabase();
   }
 
-  // 2. อ่านค่าเซนเซอร์และส่งขึ้น Supabase Cloud ทุก 4 วินาที
+  // 2. อ่านค่าเซนเซอร์ส่งขึ้น Cloud ทุก 4 วินาที
   if (now - lastTelemetryCheck >= telemetryInterval) {
     lastTelemetryCheck = now;
 
-    // อ่านอุณหภูมิและความชื้น (DHT)
     float temperature = 0.0;
     float humidity = 0.0;
-    bool dhtOk = readDHTSensor(DHT_PIN, temperature, humidity, IS_DHT22);
+    readDHTSensor(DHT_PIN, temperature, humidity, IS_DHT22);
 
-    // อ่านค่าสี (TCS34725)
     int r = 0, g = 0, b = 0, c = 0;
     String hex = "";
     bool hasColor = false;
 
-    // สแกน I2C อัตโนมัติหากยังไม่เจอ
     if (!tcsFound) {
       tcsFound = initTCS34725();
     }
@@ -433,11 +385,9 @@ void loop() {
       hasColor = readColorSensor(r, g, b, c, hex);
     }
 
-    // ส่งข้อมูลขึ้น Supabase (ถ้ายังไม่มีสีจริง จะไม่ส่งสีดำไปทับ)
     sendTelemetryToSupabase(temperature, humidity, hasColor, r, g, b, c, hex);
   }
 
-  // ป้องกัน WiFi หลุดแล้วไม่ต่อใหม่
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
   }
