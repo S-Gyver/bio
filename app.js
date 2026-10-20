@@ -1146,18 +1146,22 @@ function simulateRandomFluctuation() {
 
 function setupPolling() {
   if (pollTimer) clearInterval(pollTimer);
-  const interval = (state.connMode === 'supabase') ? 800 : 2000;
   pollTimer = setInterval(() => {
     if (state.isDemoMode) {
       simulateRandomFluctuation();
       renderDHT();
       updateLastUpdatedTime();
-    } else if (state.connMode === 'supabase') {
-      fetchSupabaseData(false);
-    } else if (state.connMode === 'local') {
-      fetchLocalData();
+    } else {
+      // Continuous background polling from Supabase Cloud (every 1s)
+      // This ensures color & sensor data always updates automatically without manual refresh
+      if (state.supabaseUrl && state.supabaseKey) {
+        fetchSupabaseData(false);
+      }
+      if (state.connMode === 'local') {
+        fetchLocalData();
+      }
     }
-  }, interval);
+  }, 1000);
 }
 
 // Helper to switch cleanly into Demo Mode
