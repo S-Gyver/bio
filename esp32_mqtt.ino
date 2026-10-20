@@ -472,8 +472,8 @@ void loop() {
 
   unsigned long now = millis();
 
-  // 1. ตรวจจับสีแบบความเร็วสูงพิเศษ (ตรวจทุก 100ms สตรีมค่าทันทีที่สีเปลี่ยน!)
-  if (now - lastColorSample >= 100) {
+  // 1. ตรวจจับสีแบบความเร็วสูง (ตรวจทุก 150ms สตรีมค่าเมื่อสีเปลี่ยนจริง เกิน Noise Threshold)
+  if (now - lastColorSample >= 150) {
     lastColorSample = now;
     if (!tcsFound) tcsFound = initTCS34725();
 
@@ -481,8 +481,8 @@ void loop() {
       int r = 0, g = 0, b = 0, c = 0;
       String hex = "";
       if (readColorSensor(r, g, b, c, hex)) {
-        // หากสีเปลี่ยน สตรีมขึ้นเว็บทันทีแบบ Realtime 50ms!
-        if (abs(r - curR) > 5 || abs(g - curG) > 5 || abs(b - curB) > 5) {
+        // หากสีเปลี่ยนจริงเกินเกณฑ์ Noise (8 ค่า) สตรีมขึ้นเว็บทันทีใน 50ms
+        if (abs(r - curR) > 8 || abs(g - curG) > 8 || abs(b - curB) > 8) {
           curR = r; curG = g; curB = b; curC = c; curHex = hex;
           publishAllSensors();
           Serial.printf("🎨 [Live Color Stream 50ms] -> %s (R:%d G:%d B:%d)\n", hex.c_str(), r, g, b);

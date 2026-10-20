@@ -49,6 +49,11 @@ const state = {
   mqttClient: null
 };
 
+// User interaction lockouts to prevent stale in-flight packets from bouncing switch states
+const lastUserRelayActionTime = [0, 0, 0, 0];
+let lastUserLedActionTime = 0;
+let lastTelemetrySyncTime = 0;
+
 let pollTimer = null;
 let consecutiveFailures = 0;
 
@@ -191,6 +196,14 @@ function setConnectionTab(mode) {
   elements.panelSupabase.style.display = mode === 'supabase' ? 'block' : 'none';
   if (elements.panelMqtt) elements.panelMqtt.style.display = mode === 'mqtt' ? 'block' : 'none';
   elements.panelLocal.style.display = mode === 'local' ? 'block' : 'none';
+
+  // If leaving Supabase mode, disconnect realtime listener so it never interferes with MQTT
+  if (mode !== 'supabase' && state.supabaseClient && state.realtimeChannel) {
+    try {
+      state.supabaseClient.removeChannel(state.realtimeChannel);
+      state.realtimeChannel = null;
+    } catch (e) {}
+  }
 
   if (mode === 'supabase') {
     elements.syncModeLabel.textContent = 'Supabase Realtime (WebSockets)';
@@ -409,6 +422,7 @@ function setupEventListeners() {
   if (elements.sensorLedToggle) {
     elements.sensorLedToggle.addEventListener('change', async (e) => {
       const isChecked = e.target.checked;
+      lastUserLedActionTime = Date.now();
       state.sensorLed = isChecked;
       if (elements.sensorLedStatusText) {
         elements.sensorLedStatusText.textContent = isChecked ? 'เปิด' : 'ปิด';
@@ -416,7 +430,7 @@ function setupEventListeners() {
       vibrate(30);
 
       if (state.isDemoMode) {
-        showToast(`ไฟ LED ส่องสี: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, isChecked ? 'success' : 'info');
+        showToast(`ไฟ LED ส่องสี: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, isChecked ? 'success' : 'info', 1800);
         return;
       }
 
@@ -427,7 +441,7 @@ function setupEventListeners() {
         }));
         // Hybrid Auto-Sync to Supabase table
         syncToSupabase({ name: isChecked ? 'led_on' : 'led_off' }, 0);
-        showToast(`⚡ [MQTT 50ms + ☁️ บันทึกตาราง] ไฟ LED: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success');
+        showToast(`⚡ ไฟ LED: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success', 1800);
         return;
       }
 
@@ -632,46 +646,83 @@ function initMqttClient() {
         const data = JSON.parse(payloadStr);
 
         if (topic.endsWith('/sensors')) {
+          const now = Date.now();
+
+          // 1. Relays Sync with Lockout Guard (prevent bounce from in-flight packets)
           if (Array.isArray(data.relays)) {
-            state.relays = data.relays.map(v => Boolean(v));
-            renderRelays();
+            let relaysChanged = false;
+            data.relays.forEach((val, idx) => {
+              if (idx < 4) {
+                // If user toggled this switch recently (< 1.5s), keep user's state!
+                if (now - lastUserRelayActionTime[idx] >= 1500) {
+                  const b = Boolean(val);
+                  if (state.relays[idx] !== b) {
+                    state.relays[idx] = b;
+                    relaysChanged = true;
+                  }
+                }
+              }
+            });
+            if (relaysChanged) renderRelays();
           }
-          if (typeof data.temp === 'number') state.dht.temp = Number(data.temp);
-          if (typeof data.hum === 'number') state.dht.hum = Number(data.hum);
-          renderDHT();
 
+          // 2. DHT Temp & Humidity Sync (only render if actually changed)
+          let dhtChanged = false;
+          if (typeof data.temp === 'number' && Math.abs(state.dht.temp - data.temp) >= 0.1) {
+            state.dht.temp = Number(data.temp);
+            dhtChanged = true;
+          }
+          if (typeof data.hum === 'number' && Math.abs(state.dht.hum - data.hum) >= 0.1) {
+            state.dht.hum = Number(data.hum);
+            dhtChanged = true;
+          }
+          if (dhtChanged) renderDHT();
+
+          // 3. Color Sensor Sync (only render if RGB values shifted)
           if (data.color) {
-            state.color.r = data.color.r ?? state.color.r;
-            state.color.g = data.color.g ?? state.color.g;
-            state.color.b = data.color.b ?? state.color.b;
-            state.color.c = data.color.c ?? state.color.c;
-            state.color.hex = data.color.hex || rgbToHex(state.color.r, state.color.g, state.color.b);
-            renderColorSensor();
-          }
-
-          if (data.led !== undefined) {
-            state.sensorLed = Boolean(data.led);
-            if (elements.sensorLedToggle) elements.sensorLedToggle.checked = state.sensorLed;
-            if (elements.sensorLedStatusText) {
-              elements.sensorLedStatusText.textContent = state.sensorLed ? 'เปิด' : 'ปิด';
-              elements.sensorLedStatusText.style.color = state.sensorLed ? '#3b82f6' : '#94a3b8';
+            const r = data.color.r ?? state.color.r;
+            const g = data.color.g ?? state.color.g;
+            const b = data.color.b ?? state.color.b;
+            if (r !== state.color.r || g !== state.color.g || b !== state.color.b) {
+              state.color.r = r;
+              state.color.g = g;
+              state.color.b = b;
+              state.color.c = data.color.c ?? state.color.c;
+              state.color.hex = data.color.hex || rgbToHex(r, g, b);
+              renderColorSensor();
             }
           }
 
-          // Hybrid Auto-Sync Telemetry to Supabase Table in background (debounced 2.5s)
-          syncToSupabase({
-            temperature: state.dht.temp,
-            humidity: state.dht.hum,
-            color_r: state.color.r,
-            color_g: state.color.g,
-            color_b: state.color.b,
-            color_c: state.color.c,
-            color_hex: state.color.hex,
-            relay1: state.relays[0],
-            relay2: state.relays[1],
-            relay3: state.relays[2],
-            relay4: state.relays[3]
-          }, 2500);
+          // 4. White LED Sync (with lockout)
+          if (data.led !== undefined && (now - lastUserLedActionTime >= 1500)) {
+            const bLed = Boolean(data.led);
+            if (state.sensorLed !== bLed) {
+              state.sensorLed = bLed;
+              if (elements.sensorLedToggle) elements.sensorLedToggle.checked = state.sensorLed;
+              if (elements.sensorLedStatusText) {
+                elements.sensorLedStatusText.textContent = state.sensorLed ? 'เปิด' : 'ปิด';
+                elements.sensorLedStatusText.style.color = state.sensorLed ? '#3b82f6' : '#94a3b8';
+              }
+            }
+          }
+
+          // 5. Throttled Background Auto-Sync to Supabase Table (at most once every 5 seconds)
+          if (now - lastTelemetrySyncTime >= 5000) {
+            lastTelemetrySyncTime = now;
+            syncToSupabase({
+              temperature: state.dht.temp,
+              humidity: state.dht.hum,
+              color_r: state.color.r,
+              color_g: state.color.g,
+              color_b: state.color.b,
+              color_c: state.color.c,
+              color_hex: state.color.hex,
+              relay1: state.relays[0],
+              relay2: state.relays[1],
+              relay3: state.relays[2],
+              relay4: state.relays[3]
+            }, 0);
+          }
 
           updateLastUpdatedTime();
         }
@@ -721,6 +772,9 @@ async function fetchSupabaseData() {
 }
 
 function applyDeviceDataFromSupabase(dev) {
+  // If user is operating in MQTT mode, do NOT let Supabase overwrite the live MQTT state
+  if (state.connMode === 'mqtt') return;
+
   state.relays = [
     Boolean(dev.relay1),
     Boolean(dev.relay2),
@@ -764,12 +818,15 @@ async function handleRelayToggle(channel, targetState) {
   const index = channel - 1;
   const previousState = state.relays[index];
 
+  // Set Lockout Guard so incoming MQTT packets from 50ms ago won't bounce switch state!
+  lastUserRelayActionTime[index] = Date.now();
+
   // Optimistic UI Update
   state.relays[index] = targetState;
   renderRelays();
 
   if (state.isDemoMode) {
-    showToast(`Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, targetState ? 'success' : 'info');
+    showToast(`Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, targetState ? 'success' : 'info', 1800);
     return;
   }
 
@@ -781,7 +838,7 @@ async function handleRelayToggle(channel, targetState) {
     }));
     // Hybrid Auto-Sync to Supabase table
     syncToSupabase({ [`relay${channel}`]: targetState }, 0);
-    showToast(`⚡ [MQTT 50ms + ☁️ บันทึกตาราง] Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success');
+    showToast(`⚡ Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success', 1800);
     return;
   }
 
@@ -823,11 +880,16 @@ async function handleRelayToggle(channel, targetState) {
 }
 
 async function handleMasterAll(targetState) {
+  const now = Date.now();
+  for (let i = 0; i < 4; i++) {
+    lastUserRelayActionTime[i] = now;
+  }
+
   state.relays = [targetState, targetState, targetState, targetState];
   renderRelays();
 
   if (state.isDemoMode) {
-    showToast(`สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมด 4 ช่อง เรียบร้อย`, targetState ? 'success' : 'info');
+    showToast(`สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมด 4 ช่อง เรียบร้อย`, targetState ? 'success' : 'info', 1800);
     return;
   }
 
@@ -843,7 +905,7 @@ async function handleMasterAll(targetState) {
       relay3: targetState,
       relay4: targetState
     }, 0);
-    showToast(`⚡ [MQTT 50ms + ☁️ บันทึกตาราง] สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมดเรียบร้อย`, 'success');
+    showToast(`⚡ สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมดเรียบร้อย`, 'success', 1800);
     return;
   }
 
@@ -943,7 +1005,7 @@ function processLocalApiData(data) {
   }
 }
 
-// --- Render Functions ---
+// --- Render Functions (with Diffing to prevent UI stutter) ---
 function renderRelays() {
   state.relays.forEach((isOn, idx) => {
     const card = elements.relayCards[idx];
@@ -952,13 +1014,14 @@ function renderRelays() {
 
     if (!card || !sw || !txt) return;
 
-    sw.checked = isOn;
+    // Only touch DOM if values actually differ
+    if (sw.checked !== isOn) sw.checked = isOn;
     if (isOn) {
-      card.classList.add('is-on');
-      txt.textContent = 'ON';
+      if (!card.classList.contains('is-on')) card.classList.add('is-on');
+      if (txt.textContent !== 'ON') txt.textContent = 'ON';
     } else {
-      card.classList.remove('is-on');
-      txt.textContent = 'OFF';
+      if (card.classList.contains('is-on')) card.classList.remove('is-on');
+      if (txt.textContent !== 'OFF') txt.textContent = 'OFF';
     }
   });
 }
@@ -1164,7 +1227,12 @@ function vibrate(pattern) {
 }
 
 // --- Toast Notifications ---
-function showToast(message, type = 'info', duration = 3000, onClick = null) {
+function showToast(message, type = 'info', duration = 2500, onClick = null) {
+  // Cap at 3 toasts max to prevent UI lag/flooding
+  while (elements.toastContainer.children.length >= 3) {
+    elements.toastContainer.removeChild(elements.toastContainer.firstChild);
+  }
+
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   toast.textContent = message;
