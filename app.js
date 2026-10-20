@@ -41,7 +41,12 @@ const state = {
     c: 1200,
     hex: '#3B82F6'
   },
-  sensorLed: true
+  sensorLed: true,
+
+  // MQTT Config (50ms Super Realtime)
+  mqttBroker: localStorage.getItem('mqtt_broker') || 'wss://broker.hivemq.com:8884/mqtt',
+  mqttTopic: localStorage.getItem('mqtt_topic') || 'sgyver/esp32',
+  mqttClient: null
 };
 
 let pollTimer = null;
@@ -59,10 +64,17 @@ const elements = {
 
   // Tabs & Settings
   tabSupabase: document.getElementById('tabSupabase'),
+  tabMqtt: document.getElementById('tabMqtt'),
   tabLocal: document.getElementById('tabLocal'),
   panelSupabase: document.getElementById('panelSupabase'),
+  panelMqtt: document.getElementById('panelMqtt'),
   panelLocal: document.getElementById('panelLocal'),
   demoModeToggle: document.getElementById('demoModeToggle'),
+
+  // MQTT Fields
+  mqttBrokerInput: document.getElementById('mqttBrokerInput'),
+  mqttTopicInput: document.getElementById('mqttTopicInput'),
+  saveMqttBtn: document.getElementById('saveMqttBtn'),
 
   // Supabase Fields
   supabaseUrlInput: document.getElementById('supabaseUrlInput'),
@@ -137,6 +149,8 @@ function initApp() {
   elements.supabaseUrlInput.value = state.supabaseUrl;
   elements.supabaseKeyInput.value = state.supabaseKey;
   elements.espIpInput.value = state.espIp;
+  if (elements.mqttBrokerInput) elements.mqttBrokerInput.value = state.mqttBroker;
+  if (elements.mqttTopicInput) elements.mqttTopicInput.value = state.mqttTopic;
   elements.demoModeToggle.checked = state.isDemoMode;
 
   // Set initial Tab
@@ -157,6 +171,8 @@ function initApp() {
     showToast('กำลังใช้งานในโหมดจำลอง (Demo) คุณสามารถทดสอบปุ่มและเซนเซอร์ได้ทันที', 'info', 4000);
   } else if (state.connMode === 'supabase' && state.supabaseUrl && state.supabaseKey) {
     initSupabaseClient();
+  } else if (state.connMode === 'mqtt') {
+    initMqttClient();
   } else {
     // If no credentials, stay in Demo Mode
     enableDemoMode();
@@ -168,17 +184,21 @@ function setConnectionTab(mode) {
   state.connMode = mode;
   localStorage.setItem('esp32_conn_mode', mode);
 
+  elements.tabSupabase.classList.toggle('active', mode === 'supabase');
+  if (elements.tabMqtt) elements.tabMqtt.classList.toggle('active', mode === 'mqtt');
+  elements.tabLocal.classList.toggle('active', mode === 'local');
+
+  elements.panelSupabase.style.display = mode === 'supabase' ? 'block' : 'none';
+  if (elements.panelMqtt) elements.panelMqtt.style.display = mode === 'mqtt' ? 'block' : 'none';
+  elements.panelLocal.style.display = mode === 'local' ? 'block' : 'none';
+
   if (mode === 'supabase') {
-    elements.tabSupabase.classList.add('active');
-    elements.tabLocal.classList.remove('active');
-    elements.panelSupabase.style.display = 'block';
-    elements.panelLocal.style.display = 'none';
     elements.syncModeLabel.textContent = 'Supabase Realtime (WebSockets)';
+    if (!state.isDemoMode && !state.supabaseClient) initSupabaseClient();
+  } else if (mode === 'mqtt') {
+    elements.syncModeLabel.textContent = 'MQTT Cloud (50ms Super Realtime)';
+    if (!state.isDemoMode) initMqttClient();
   } else {
-    elements.tabLocal.classList.add('active');
-    elements.tabSupabase.classList.remove('active');
-    elements.panelLocal.style.display = 'block';
-    elements.panelSupabase.style.display = 'none';
     elements.syncModeLabel.textContent = 'HTTP Fetch (Local LAN)';
   }
 }
@@ -193,7 +213,29 @@ function setupEventListeners() {
 
   // Tab Switching
   elements.tabSupabase.addEventListener('click', () => setConnectionTab('supabase'));
+  if (elements.tabMqtt) elements.tabMqtt.addEventListener('click', () => setConnectionTab('mqtt'));
   elements.tabLocal.addEventListener('click', () => setConnectionTab('local'));
+
+  // Save MQTT Config & Reconnect
+  if (elements.saveMqttBtn) {
+    elements.saveMqttBtn.addEventListener('click', () => {
+      const broker = elements.mqttBrokerInput.value.trim();
+      const topic = elements.mqttTopicInput.value.trim();
+      if (!broker || !topic) {
+        showToast('กรุณากรอกทั้ง MQTT Broker และ Topic', 'error');
+        return;
+      }
+      state.mqttBroker = broker;
+      state.mqttTopic = topic;
+      localStorage.setItem('mqtt_broker', broker);
+      localStorage.setItem('mqtt_topic', topic);
+      state.isDemoMode = false;
+      elements.demoModeToggle.checked = false;
+      localStorage.setItem('esp32_demo', 'false');
+      vibrate(30);
+      initMqttClient();
+    });
+  }
 
   // Demo Mode Switch
   elements.demoModeToggle.addEventListener('change', (e) => {
@@ -378,6 +420,15 @@ function setupEventListeners() {
         return;
       }
 
+      // If in MQTT Realtime Mode (50ms)
+      if (state.connMode === 'mqtt' && state.mqttClient && state.mqttClient.connected) {
+        state.mqttClient.publish(`${state.mqttTopic}/commands`, JSON.stringify({
+          led: isChecked
+        }));
+        showToast(`⚡ [MQTT 50ms] ไฟ LED: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success');
+        return;
+      }
+
       if (state.connMode === 'supabase' && state.supabaseClient) {
         try {
           const val = isChecked ? 'led_on' : 'led_off';
@@ -491,6 +542,95 @@ async function initSupabaseClient() {
   }
 }
 
+// --- MQTT Realtime Client (50ms Super Realtime) ---
+function initMqttClient() {
+  if (typeof mqtt === 'undefined') {
+    showToast('กำลังโหลด MQTT Client...', 'info');
+    return;
+  }
+
+  if (state.mqttClient) {
+    try { state.mqttClient.end(true); } catch (e) {}
+  }
+
+  showToast('⚡ กำลังเชื่อมต่อ MQTT Cloud Broker (50ms)...', 'info');
+  updateConnectionBadge('loading');
+
+  try {
+    const client = mqtt.connect(state.mqttBroker, {
+      clientId: 'Web_' + Math.random().toString(16).substring(2, 10),
+      clean: true,
+      connectTimeout: 5000,
+      reconnectPeriod: 2500
+    });
+
+    client.on('connect', () => {
+      state.isConnected = true;
+      updateConnectionBadge('connected');
+      elements.pingValue.textContent = '50ms (MQTT)';
+      showToast('⚡ เชื่อมต่อ MQTT สำเร็จ! ความเร็วสูงสุดระดับ 50ms', 'success');
+
+      // Subscribe to telemetry and status
+      client.subscribe(`${state.mqttTopic}/sensors`);
+      client.subscribe(`${state.mqttTopic}/status`);
+    });
+
+    client.on('message', (topic, message) => {
+      try {
+        const payloadStr = message.toString();
+        const data = JSON.parse(payloadStr);
+
+        if (topic.endsWith('/sensors')) {
+          if (Array.isArray(data.relays)) {
+            state.relays = data.relays.map(v => Boolean(v));
+            renderRelays();
+          }
+          if (typeof data.temp === 'number') state.dht.temp = Number(data.temp);
+          if (typeof data.hum === 'number') state.dht.hum = Number(data.hum);
+          renderDHT();
+
+          if (data.color) {
+            state.color.r = data.color.r ?? state.color.r;
+            state.color.g = data.color.g ?? state.color.g;
+            state.color.b = data.color.b ?? state.color.b;
+            state.color.c = data.color.c ?? state.color.c;
+            state.color.hex = data.color.hex || rgbToHex(state.color.r, state.color.g, state.color.b);
+            renderColorSensor();
+          }
+
+          if (data.led !== undefined) {
+            state.sensorLed = Boolean(data.led);
+            if (elements.sensorLedToggle) elements.sensorLedToggle.checked = state.sensorLed;
+            if (elements.sensorLedStatusText) {
+              elements.sensorLedStatusText.textContent = state.sensorLed ? 'เปิด' : 'ปิด';
+              elements.sensorLedStatusText.style.color = state.sensorLed ? '#3b82f6' : '#94a3b8';
+            }
+          }
+
+          updateLastUpdatedTime();
+        }
+      } catch (err) {
+        console.error('MQTT message error:', err);
+      }
+    });
+
+    client.on('error', (err) => {
+      console.warn('MQTT Connection Error:', err);
+    });
+
+    client.on('close', () => {
+      if (state.connMode === 'mqtt' && !state.isDemoMode) {
+        updateConnectionBadge('disconnected');
+        elements.pingValue.textContent = 'กำลังต่อใหม่...';
+      }
+    });
+
+    state.mqttClient = client;
+  } catch (err) {
+    console.error('MQTT exception:', err);
+  }
+}
+
 async function fetchSupabaseData() {
   if (!state.supabaseClient) return;
   try {
@@ -562,6 +702,16 @@ async function handleRelayToggle(channel, targetState) {
     return;
   }
 
+  // If in MQTT Realtime Mode (50ms)
+  if (state.connMode === 'mqtt' && state.mqttClient && state.mqttClient.connected) {
+    state.mqttClient.publish(`${state.mqttTopic}/commands`, JSON.stringify({
+      relay: channel,
+      state: targetState
+    }));
+    showToast(`⚡ [MQTT 50ms] Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success');
+    return;
+  }
+
   // If in Supabase Cloud Mode
   if (state.connMode === 'supabase' && state.supabaseClient) {
     try {
@@ -605,6 +755,15 @@ async function handleMasterAll(targetState) {
 
   if (state.isDemoMode) {
     showToast(`สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมด 4 ช่อง เรียบร้อย`, targetState ? 'success' : 'info');
+    return;
+  }
+
+  // If in MQTT Realtime Mode (50ms)
+  if (state.connMode === 'mqtt' && state.mqttClient && state.mqttClient.connected) {
+    state.mqttClient.publish(`${state.mqttTopic}/commands`, JSON.stringify({
+      master: targetState
+    }));
+    showToast(`⚡ [MQTT 50ms] สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมดเรียบร้อย`, 'success');
     return;
   }
 
@@ -888,10 +1047,16 @@ function updateConnectionBadge(overrideStatus) {
 
   if (status === 'cloud' || status === 'connected') {
     badge.classList.add('status-connected');
-    text.textContent = state.connMode === 'supabase' ? 'Cloud เชื่อมต่อแล้ว (Online)' : 'เชื่อมต่อ IP แล้ว';
-  } else if (status === 'fetching') {
+    if (state.connMode === 'mqtt') {
+      text.textContent = '⚡ MQTT Realtime (50ms)';
+    } else if (state.connMode === 'supabase') {
+      text.textContent = 'Cloud เชื่อมต่อแล้ว (Online)';
+    } else {
+      text.textContent = 'เชื่อมต่อ IP แล้ว';
+    }
+  } else if (status === 'loading') {
     badge.classList.add('status-fetching');
-    text.textContent = 'กำลังดึงข้อมูล...';
+    text.textContent = 'กำลังเชื่อมต่อ MQTT...';
   } else {
     badge.classList.add('status-disconnected');
     text.textContent = 'ไม่พบการเชื่อมต่อ';
