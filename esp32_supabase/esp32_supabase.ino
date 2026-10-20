@@ -1,13 +1,29 @@
 /*
  * =========================================================================
- * ESP32 Complete IoT Controller - Supabase Cloud (Fixed Color Overwrite)
- * 4-Channel Relays + DHT Temp/Humidity + TCS34725 Color Sensor
+ * ESP32 Complete IoT Controller - Supabase Cloud
+ * 4-Channel Relays + DHT Temp/Humidity + TCS34725 Color Sensor + LED Control
  * =========================================================================
- * 1. Relay 4 ช่อง: GPIO 16, 17, 18, 19 (Open-Drain ตัดวงจร 100%)
- * 2. เซนเซอร์วัดอุณหภูมิ (DHT): OUT -> GPIO 4, VCC -> 3.3V, GND -> GND
- * 3. เซนเซอร์ตรวจจับสี (TCS34725): 
- *    - SDA -> GPIO 21, SCL -> GPIO 22, VCC -> 3.3V, GND -> GND
- *    - ขา LED -> ต่อเข้า 3.3V เพื่อเปิดไฟส่องวัตถุ
+ * 
+ * 1. Relay 4 ช่อง (Active LOW แบบ Open-Drain ปลอดภัย ตัดวงจร 100%):
+ *    - IN 1 : GPIO 16 (สวิตช์ 1)
+ *    - IN 2 : GPIO 17 (สวิตช์ 2)
+ *    - IN 3 : GPIO 18 (สวิตช์ 3)
+ *    - IN 4 : GPIO 19 (สวิตช์ 4)
+ *    - VCC  : 3.3V หรือ 5V (VIN)
+ *    - GND  : GND ของ ESP32
+ * 
+ * 2. เซนเซอร์วัดอุณหภูมิและความชื้น (DHT11 / DHT22):
+ *    - ขา + (VCC) : 3.3V
+ *    - ขา - (GND) : GND
+ *    - ขา OUT     : GPIO 4
+ * 
+ * 3. เซนเซอร์ตรวจจับสี (TCS34725 I2C Color Sensor):
+ *    - ขา VIN / VCC : 3.3V
+ *    - ขา GND       : GND
+ *    - ขา SDA       : GPIO 21
+ *    - ขา SCL       : GPIO 22
+ *    - ขา LED       : GPIO 23 (สั่งเปิด-ปิดไฟ LED ส่องวัตถุผ่าน Dashboard ได้!)
+ * 
  * =========================================================================
  */
 
@@ -15,6 +31,10 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Wire.h>
+
+// --- ขาควบคุมไฟ LED สีขาวของเซนเซอร์สี (GPIO 23) ---
+const int COLOR_LED_PIN = 23; 
+bool colorLedState = true; // สถานะเริ่มต้น: เปิดไฟ (ON)
 
 // --- ตั้งค่าเซนเซอร์ DHT ---
 const bool IS_DHT22 = false; // ตัวสีฟ้า (DHT11) = false, ตัวสีขาว (DHT22) = true
@@ -32,6 +52,7 @@ const char* password = "0894565410";
 const char* supabaseUrl = "https://igiihteeeprpcxxlldkd.supabase.co";
 const char* supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlnaWlodGVlZXBycGN4eGxsZGtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODkwNzksImV4cCI6MjEwMDU2NTA3OX0.fr8_ZAYKQ3D-JgEtAWGJnNvKjoUmYxs1T7tjzzsEltw";
 
+// ตัวแปรช่วงเวลาการทำงาน
 unsigned long lastRelayCheck = 0;
 const unsigned long relayInterval = 1000;      // ตรวจสอบสวิตช์ทุก 1 วินาที
 
@@ -40,6 +61,21 @@ const unsigned long telemetryInterval = 4000;  // ส่งค่าเซนเ
 
 #define TCS34725_ADDR 0x29
 bool tcsFound = false;
+
+// ฟังก์ชันสั่งงานไฟ LED บนเซนเซอร์สี (Active LOW: ดึงลงกราวด์=ดับ, ปล่อยลอย=ติด)
+void setColorLed(bool state) {
+  colorLedState = state;
+  if (state) {
+    // เปิดไฟ LED: ปล่อยขาลอย (High-Z) ให้ Pull-up บนบอร์ดดึงไฟสว่าง
+    pinMode(COLOR_LED_PIN, INPUT);
+    Serial.println(">>> [Sensor LED] เปิดไฟส่องสี (ON)");
+  } else {
+    // ปิดไฟ LED: ดึงลงกราวด์ 0V ตัดไฟ LED บนบอร์ดดับสนิท 100%
+    pinMode(COLOR_LED_PIN, OUTPUT);
+    digitalWrite(COLOR_LED_PIN, LOW);
+    Serial.println(">>> [Sensor LED] ปิดไฟส่องสี (OFF)");
+  }
+}
 
 // ฟังก์ชันสั่งงานรีเลย์ Active LOW (Open-Drain)
 void setRelay(int index, bool state) {
@@ -145,12 +181,10 @@ bool readColorSensor(int &outR, int &outG, int &outB, int &outC, String &outHex)
 
   outC = c;
 
-  // หากไม่มีแสง หรือยังไม่ได้ต่อเซนเซอร์ จะไม่ถือว่าได้สีที่ถูกต้อง
   if (c <= 10) {
     return false;
   }
 
-  // คำนวณสัดส่วนสี RGB 0-255
   float rf = ((float)r / (float)c) * 255.0;
   float gf = ((float)g / (float)c) * 255.0;
   float bf = ((float)b / (float)c) * 255.0;
@@ -228,7 +262,7 @@ bool readDHTSensor(int pin, float &temp, float &hum, bool is22) {
 }
 
 // -------------------------------------------------------------
-// ดึงสถานะสวิตช์รีเลย์จาก Supabase
+// ดึงสถานะสวิตช์รีเลย์และไฟ LED ส่องสีจาก Supabase
 // -------------------------------------------------------------
 void checkSwitchesFromSupabase() {
   if (WiFi.status() != WL_CONNECTED) return;
@@ -237,7 +271,7 @@ void checkSwitchesFromSupabase() {
   client.setInsecure();
 
   HTTPClient https;
-  String endpoint = String(supabaseUrl) + "/rest/v1/esp32_devices?id=eq.1&select=relay1,relay2,relay3,relay4";
+  String endpoint = String(supabaseUrl) + "/rest/v1/esp32_devices?id=eq.1&select=relay1,relay2,relay3,relay4,name";
 
   if (https.begin(client, endpoint)) {
     https.addHeader("apikey", supabaseAnonKey);
@@ -258,13 +292,20 @@ void checkSwitchesFromSupabase() {
       if (r2 != relayStates[1]) setRelay(1, r2);
       if (r3 != relayStates[2]) setRelay(2, r3);
       if (r4 != relayStates[3]) setRelay(3, r4);
+
+      // ตรวจสอบคำสั่งเปิด-ปิดไฟ LED ของเซนเซอร์สี (ผ่านฟิลด์ name)
+      if (payload.indexOf("\"name\":\"led_off\"") != -1) {
+        if (colorLedState != false) setColorLed(false);
+      } else if (payload.indexOf("\"name\":\"led_on\"") != -1) {
+        if (colorLedState != true) setColorLed(true);
+      }
     }
     https.end();
   }
 }
 
 // -------------------------------------------------------------
-// ส่งข้อมูลขึ้น Supabase (ส่งสีเฉพาะเมื่ออ่านได้จริง)
+// ส่งข้อมูลขึ้น Supabase
 // -------------------------------------------------------------
 void sendTelemetryToSupabase(float temp, float hum, bool hasColor, int r, int g, int b, int c, const String& hex) {
   if (WiFi.status() != WL_CONNECTED) return;
@@ -290,7 +331,6 @@ void sendTelemetryToSupabase(float temp, float hum, bool hasColor, int r, int g,
       hasField = true;
     }
 
-    // *** ส่งสีเฉพาะเมื่อมีเซนเซอร์และแสงสะท้อนจริง (c > 10) ***
     if (hasColor && c > 10) {
       if (hasField) jsonBody += ",";
       jsonBody += "\"color_r\":" + String(r) + 
@@ -323,11 +363,18 @@ void setup() {
   delay(1000);
   Serial.println("\n=======================================================");
   Serial.println(" ESP32 Full IoT Controller (Relays + DHT + TCS34725) ");
+  Serial.println(" ขารีเลย์: 16 (CH1), 17 (CH2), 18 (CH3), 19 (CH4) ");
+  Serial.println(" ขา DHT: GPIO 4 ");
+  Serial.println(" ขา สี TCS34725: SDA=21, SCL=22 ");
+  Serial.println(" ขา ไฟ LED เซนเซอร์สี: GPIO 23 ");
   Serial.println("=======================================================");
 
   for (int i = 0; i < 4; i++) {
     setRelay(i, false);
   }
+
+  // เริ่มต้นเปิดไฟ LED บนเซนเซอร์สี
+  setColorLed(true);
 
   // ตรวจหาสาย I2C
   scanI2C();
@@ -359,7 +406,7 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // 1. ตรวจสอบสวิตช์รีเลย์ทุก 1 วินาที
+  // 1. ตรวจสอบสวิตช์รีเลย์และไฟ LED ส่องสีทุก 1 วินาที
   if (now - lastRelayCheck >= relayInterval) {
     lastRelayCheck = now;
     checkSwitchesFromSupabase();

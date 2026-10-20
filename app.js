@@ -40,7 +40,8 @@ const state = {
     b: 246,
     c: 1200,
     hex: '#3B82F6'
-  }
+  },
+  sensorLed: true
 };
 
 let pollTimer = null;
@@ -105,7 +106,9 @@ const elements = {
   humBar: document.getElementById('humBar'),
   randomDhtBtn: document.getElementById('randomDhtBtn'),
 
-  // Color Sensor
+  // Color Sensor & Sensor LED
+  sensorLedToggle: document.getElementById('sensorLedToggle'),
+  sensorLedStatusText: document.getElementById('sensorLedStatusText'),
   colorPreviewBox: document.getElementById('colorPreviewBox'),
   previewHexBadge: document.getElementById('previewHexBadge'),
   hexCodeDisplay: document.getElementById('hexCodeDisplay'),
@@ -360,6 +363,39 @@ function setupEventListeners() {
     showToast(`สุ่มสีใหม่: ${state.color.hex}`, 'info');
   });
 
+  // Sensor White LED Toggle Switch
+  if (elements.sensorLedToggle) {
+    elements.sensorLedToggle.addEventListener('change', async (e) => {
+      const isChecked = e.target.checked;
+      state.sensorLed = isChecked;
+      if (elements.sensorLedStatusText) {
+        elements.sensorLedStatusText.textContent = isChecked ? 'เปิด' : 'ปิด';
+      }
+      vibrate(30);
+
+      if (state.isDemoMode) {
+        showToast(`ไฟ LED ส่องสี: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, isChecked ? 'success' : 'info');
+        return;
+      }
+
+      if (state.connMode === 'supabase' && state.supabaseClient) {
+        try {
+          const val = isChecked ? 'led_on' : 'led_off';
+          const { error } = await state.supabaseClient
+            .from('esp32_devices')
+            .update({ name: val, updated_at: new Date().toISOString() })
+            .eq('id', 1);
+
+          if (!error) {
+            showToast(`💡 สั่ง${isChecked ? 'เปิด' : 'ปิด'}ไฟ LED เซนเซอร์สีสำเร็จ`, 'success');
+          }
+        } catch (err) {
+          console.error('Error toggling sensor LED:', err);
+        }
+      }
+    });
+  }
+
   // Random/Test DHT22 Temperature & Humidity Button
   if (elements.randomDhtBtn) {
     elements.randomDhtBtn.addEventListener('click', async () => {
@@ -493,6 +529,20 @@ function applyDeviceDataFromSupabase(dev) {
     state.color.c = dev.color_c || 1200;
     state.color.hex = dev.color_hex || rgbToHex(dev.color_r, dev.color_g, dev.color_b);
     renderColorSensor();
+  }
+
+  // Sync Sensor White LED state
+  if (dev.name === 'led_off') {
+    state.sensorLed = false;
+  } else if (dev.name === 'led_on') {
+    state.sensorLed = true;
+  }
+  if (elements.sensorLedToggle) {
+    elements.sensorLedToggle.checked = state.sensorLed;
+  }
+  if (elements.sensorLedStatusText) {
+    elements.sensorLedStatusText.textContent = state.sensorLed ? 'เปิด' : 'ปิด';
+    elements.sensorLedStatusText.style.color = state.sensorLed ? '#3b82f6' : '#94a3b8';
   }
 
   updateLastUpdatedTime();

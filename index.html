@@ -440,13 +440,22 @@
           </h2>
           <p class="section-desc">อ่านค่าเฉดสีจริงจากเซนเซอร์ RGB พร้อมโค้ด HEX และความเข้มแสง Clear</p>
         </div>
-        <!-- Demo color randomizer button for demo testing -->
-        <button id="randomColorBtn" class="btn btn-secondary btn-sm" title="สุ่มสีเพื่อทดสอบในโหมด Demo">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-          </svg>
-          สุ่มสีทดสอบ
-        </button>
+        <div class="color-header-actions" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <!-- Sensor LED Toggle -->
+          <label class="sensor-led-pill" style="display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:0.85rem; font-weight:600; padding:6px 14px; background:var(--bg-glass); border:1px solid var(--border-color); border-radius:20px; box-shadow:var(--shadow-sm);">
+            <span>💡 ไฟ LED ส่องวัตถุ (ขา 23):</span>
+            <input type="checkbox" id="sensorLedToggle" checked style="accent-color: #3b82f6; width:16px; height:16px; cursor:pointer;">
+            <span id="sensorLedStatusText" style="color:#3b82f6; font-size:0.85rem; font-weight:700;">เปิด</span>
+          </label>
+
+          <!-- Demo color randomizer button for demo testing -->
+          <button id="randomColorBtn" class="btn btn-secondary btn-sm" title="สุ่มสีเพื่อทดสอบในโหมด Demo">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+            </svg>
+            สุ่มสีทดสอบ
+          </button>
+        </div>
       </div>
 
       <div class="color-sensor-card card">
