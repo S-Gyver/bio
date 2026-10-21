@@ -18,8 +18,8 @@ const state = {
   espIp: localStorage.getItem('esp32_ip') || '192.168.1.47',
   pollIntervalMs: parseInt(localStorage.getItem('esp32_interval') || '2000', 10),
 
-  // Demo Mode (ค่าเริ่มต้น: ปิด Demo เชื่อมต่อจริง)
-  isDemoMode: localStorage.getItem('esp32_demo') === 'true',
+  // Demo Mode (ปิดถาวรตามคำขอ เชื่อมต่อฮาร์ดแวร์จริง 100%)
+  isDemoMode: false,
   theme: localStorage.getItem('esp32_theme') || 'light',
 
   // Status & Telemetry
@@ -150,13 +150,16 @@ const elements = {
 function initApp() {
   applyTheme(state.theme);
 
+  // Clear demo mode stored in localStorage
+  localStorage.removeItem('esp32_demo');
+  state.isDemoMode = false;
+
   // Restore inputs
   elements.supabaseUrlInput.value = state.supabaseUrl;
   elements.supabaseKeyInput.value = state.supabaseKey;
   elements.espIpInput.value = state.espIp;
   if (elements.mqttBrokerInput) elements.mqttBrokerInput.value = state.mqttBroker;
-  if (elements.mqttTopicInput) elements.mqttTopicInput.value = state.mqttTopic;
-  elements.demoModeToggle.checked = state.isDemoMode;
+  if (elements.demoModeToggle) elements.demoModeToggle.checked = false;
 
   // Set initial Tab
   setConnectionTab(state.connMode);
@@ -165,7 +168,7 @@ function initApp() {
   setupEventListeners();
 
   // Render initial UI
-  updateConnectionBadge();
+  updateConnectionBadge('loading');
   renderRelays();
   renderDHT();
   renderColorSensor();
@@ -173,9 +176,7 @@ function initApp() {
   // Setup Connection
   setupPolling();
 
-  if (state.isDemoMode) {
-    showToast('กำลังใช้งานในโหมดจำลอง (Demo) คุณสามารถทดสอบปุ่มและเซนเซอร์ได้ทันที', 'info', 4000);
-  } else if (state.connMode === 'supabase' && state.supabaseUrl && state.supabaseKey) {
+  if (state.connMode === 'supabase' && state.supabaseUrl && state.supabaseKey) {
     initSupabaseClient();
   } else if (state.connMode === 'mqtt') {
     initMqttClient();
@@ -244,45 +245,56 @@ function setupEventListeners() {
       localStorage.setItem('mqtt_broker', broker);
       localStorage.setItem('mqtt_topic', topic);
       state.isDemoMode = false;
-      elements.demoModeToggle.checked = false;
-      localStorage.setItem('esp32_demo', 'false');
+      if (elements.demoModeToggle) elements.demoModeToggle.checked = false;
+      localStorage.removeItem('esp32_demo');
       vibrate(30);
       initMqttClient();
     });
   }
 
-  // Demo Mode Switch
-  elements.demoModeToggle.addEventListener('change', (e) => {
-    state.isDemoMode = e.target.checked;
-    localStorage.setItem('esp32_demo', state.isDemoMode ? 'true' : 'false');
-    vibrate(30);
+  // Demo Mode Switch (if exists in DOM)
+  if (elements.demoModeToggle) {
+    elements.demoModeToggle.addEventListener('change', (e) => {
+      state.isDemoMode = e.target.checked;
+      vibrate(30);
 
-    if (state.isDemoMode) {
-      enableDemoMode();
-    } else {
-      updateConnectionBadge('loading');
-      if (state.connMode === 'supabase') {
-        if (!state.supabaseUrl || !state.supabaseKey) {
-          showToast('กรุณากรอก Supabase URL และ Anon Key ก่อนเชื่อมต่อ', 'error');
-          updateConnectionBadge('disconnected');
-          return;
-        }
-        initSupabaseClient();
-      } else if (state.connMode === 'mqtt') {
-        initMqttClient();
+      if (state.isDemoMode) {
+        enableDemoMode();
       } else {
-        showToast(`กำลังเชื่อมต่อ ESP32 Local: ${state.espIp}`, 'info');
-        fetchLocalData();
+        updateConnectionBadge('loading');
+        if (state.connMode === 'supabase') {
+          if (!state.supabaseUrl || !state.supabaseKey) {
+            showToast('กรุณากรอก Supabase URL และ Anon Key ก่อนเชื่อมต่อ', 'error');
+            updateConnectionBadge('disconnected');
+            return;
+          }
+          initSupabaseClient();
+        } else if (state.connMode === 'mqtt') {
+          initMqttClient();
+        } else {
+          showToast(`กำลังเชื่อมต่อ ESP32 Local: ${state.espIp}`, 'info');
+          fetchLocalData();
+        }
       }
-    }
-  });
+    });
+  }
 
-  // Clicking Status Badge when disconnected will activate Demo Mode
-  elements.connectionStatusBadge.addEventListener('click', () => {
-    if (!state.isDemoMode && !state.isConnected) {
-      enableDemoMode();
-    }
-  });
+  // Clicking Status Badge will re-attempt connection
+  if (elements.connectionStatusBadge) {
+    elements.connectionStatusBadge.addEventListener('click', () => {
+      vibrate(30);
+      if (!state.isConnected) {
+        updateConnectionBadge('loading');
+        if (state.connMode === 'supabase') {
+          initSupabaseClient();
+        } else if (state.connMode === 'mqtt') {
+          initMqttClient();
+        } else {
+          fetchLocalData();
+        }
+      }
+    });
+  }
 
   // Save Supabase & Connect
   elements.saveSupabaseBtn.addEventListener('click', async () => {
@@ -311,8 +323,8 @@ function setupEventListeners() {
 
     if (success) {
       state.isDemoMode = false;
-      elements.demoModeToggle.checked = false;
-      localStorage.setItem('esp32_demo', 'false');
+      if (elements.demoModeToggle) elements.demoModeToggle.checked = false;
+      localStorage.removeItem('esp32_demo');
       showToast('✅ เชื่อมต่อ Cloud สำเร็จเรียบร้อยแล้ว!', 'success');
     }
   });
@@ -357,8 +369,8 @@ function setupEventListeners() {
         const json = await res.json();
         processLocalApiData(json);
         state.isDemoMode = false;
-        elements.demoModeToggle.checked = false;
-        localStorage.setItem('esp32_demo', 'false');
+        if (elements.demoModeToggle) elements.demoModeToggle.checked = false;
+        localStorage.removeItem('esp32_demo');
         consecutiveFailures = 0;
         state.isConnected = true;
         updateConnectionBadge('connected');
@@ -367,8 +379,9 @@ function setupEventListeners() {
         throw new Error('Response not OK');
       }
     } catch (e) {
-      enableDemoMode();
-      showToast(`⚠️ ไม่พบ ESP32 ที่ IP: ${state.espIp} — ระบบยังคงเปิดโหมดจำลอง (Demo Mode) ให้คุณทดสอบต่อได้`, 'info', 6000);
+      state.isConnected = false;
+      updateConnectionBadge('disconnected');
+      showToast(`⚠️ ไม่พบ ESP32 ที่ IP: ${state.espIp}`, 'error', 4000);
     } finally {
       elements.saveConnectBtn.disabled = false;
       elements.saveConnectBtn.innerHTML = originalBtnHtml;
@@ -989,10 +1002,6 @@ async function fetchLocalData() {
     state.isConnected = false;
     updateConnectionBadge('disconnected');
     elements.pingValue.textContent = 'Offline';
-
-    if (consecutiveFailures >= 2) {
-      showToast(`⚠️ เชื่อมต่อ ${state.espIp} ไม่สำเร็จ คลิกที่นี่เพื่อเปิดโหมดจำลอง`, 'error', 7000, enableDemoMode);
-    }
   } finally {
     state.isFetching = false;
   }
@@ -1217,9 +1226,9 @@ function updateConnectionBadge(overrideStatus) {
     } else {
       text.textContent = 'เชื่อมต่อ IP แล้ว';
     }
-  } else if (status === 'loading') {
+  } else if (status === 'loading' || status === 'fetching') {
     badge.classList.add('status-fetching');
-    text.textContent = 'กำลังเชื่อมต่อ MQTT...';
+    text.textContent = 'กำลังเชื่อมต่อ...';
   } else {
     badge.classList.add('status-disconnected');
     text.textContent = 'ไม่พบการเชื่อมต่อ';

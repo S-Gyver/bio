@@ -415,32 +415,32 @@ body {
 .demo-switch-label input {
   display: none;
 }
-.toggle-slider {
-  width: 51px;
-  height: 31px;
-  background: rgba(120, 120, 128, 0.2);
-  border-radius: var(--radius-pill);
+.demo-switch-label .toggle-slider {
+  width: 51px !important;
+  height: 31px !important;
+  background: rgba(120, 120, 128, 0.25) !important;
+  border-radius: var(--radius-pill) !important;
   position: relative;
   transition: background-color 0.25s ease;
   flex-shrink: 0;
 }
-.toggle-slider::before {
-  content: '';
+.demo-switch-label .toggle-slider::before {
+  content: '' !important;
   position: absolute;
-  width: 27px;
-  height: 27px;
-  left: 2px;
-  top: 2px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: var(--shadow-thumb);
-  transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+  width: 27px !important;
+  height: 27px !important;
+  left: 2px !important;
+  top: 2px !important;
+  border-radius: 50% !important;
+  background: #ffffff !important;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.06) !important;
+  transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1) !important;
 }
 .demo-switch-label input:checked + .toggle-slider {
-  background: var(--apple-green);
+  background: var(--apple-green) !important;
 }
 .demo-switch-label input:checked + .toggle-slider::before {
-  transform: translateX(20px);
+  transform: translateX(20px) !important;
 }
 
 /* iOS Segmented Control for Tabs */
