@@ -95,7 +95,7 @@
         <div class="demo-toggle-wrap">
           <label class="demo-switch-label" for="demoModeToggle">
             <span>โหมดจำลอง (Demo)</span>
-            <input type="checkbox" id="demoModeToggle" checked>
+            <input type="checkbox" id="demoModeToggle">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -150,7 +150,7 @@
             </button>
           </div>
           <div style="text-align: right; margin-top: 0.35rem;">
-            <button type="button" onclick="const el=document.getElementById('supabaseFieldsWrap'); el.style.display=el.style.display==='none'?'block':'none';" style="background:none; border:none; color:var(--apple-text-muted); font-size:0.75rem; cursor:pointer; padding:0.2rem 0.4rem; text-decoration:underline;">⚙️ แก้ไข URL / Key</button>
+            <button type="button" onclick="const el=document.getElementById('supabaseFieldsWrap'); el.style.display=el.style.display==='none'?'block':'none';" style="background:none; border:none; color:var(--apple-text-muted); font-size:0.75rem; cursor:pointer; padding:0.2rem 0.4rem; text-decoration:underline;"></button>
           </div>
         </div>
 
@@ -177,7 +177,7 @@
             </button>
           </div>
           <div style="text-align: right; margin-top: 0.35rem;">
-            <button type="button" onclick="const el=document.getElementById('mqttFieldsWrap'); el.style.display=el.style.display==='none'?'block':'none';" style="background:none; border:none; color:var(--apple-text-muted); font-size:0.75rem; cursor:pointer; padding:0.2rem 0.4rem; text-decoration:underline;">⚙️ แก้ไข Broker / Topic</button>
+            <button type="button" onclick="const el=document.getElementById('mqttFieldsWrap'); el.style.display=el.style.display==='none'?'block':'none';" style="background:none; border:none; color:var(--apple-text-muted); font-size:0.75rem; cursor:pointer; padding:0.2rem 0.4rem; text-decoration:underline;"></button>
           </div>
         </div>
 
@@ -478,7 +478,7 @@
         <div class="color-header-actions" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <!-- Sensor LED Toggle -->
           <label class="sensor-led-pill" style="display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:0.85rem; font-weight:600; padding:6px 14px; background:var(--bg-glass); border:1px solid var(--border-color); border-radius:20px; box-shadow:var(--shadow-sm);">
-            <span>💡 ไฟ LED ส่องวัตถุ (ขา 23):</span>
+            <span>💡 ไฟ LED ส่องวัตถุ:</span>
             <input type="checkbox" id="sensorLedToggle" checked style="accent-color: #3b82f6; width:16px; height:16px; cursor:pointer;">
             <span id="sensorLedStatusText" style="color:#3b82f6; font-size:0.85rem; font-weight:700;">เปิด</span>
           </label>

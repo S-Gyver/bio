@@ -18,9 +18,9 @@ const state = {
   espIp: localStorage.getItem('esp32_ip') || '192.168.1.47',
   pollIntervalMs: parseInt(localStorage.getItem('esp32_interval') || '2000', 10),
 
-  // Demo Mode
-  isDemoMode: localStorage.getItem('esp32_demo') !== 'false',
-  theme: localStorage.getItem('esp32_theme') || 'dark',
+  // Demo Mode (ค่าเริ่มต้น: ปิด Demo เชื่อมต่อจริง)
+  isDemoMode: localStorage.getItem('esp32_demo') === 'true',
+  theme: localStorage.getItem('esp32_theme') || 'light',
 
   // Status & Telemetry
   isConnected: false,
@@ -179,9 +179,10 @@ function initApp() {
     initSupabaseClient();
   } else if (state.connMode === 'mqtt') {
     initMqttClient();
+  } else if (state.connMode === 'local' && state.espIp) {
+    fetchLocalData();
   } else {
-    // If no credentials, stay in Demo Mode
-    enableDemoMode();
+    updateConnectionBadge('disconnected');
   }
 }
 
@@ -253,19 +254,22 @@ function setupEventListeners() {
   // Demo Mode Switch
   elements.demoModeToggle.addEventListener('change', (e) => {
     state.isDemoMode = e.target.checked;
-    localStorage.setItem('esp32_demo', state.isDemoMode);
+    localStorage.setItem('esp32_demo', state.isDemoMode ? 'true' : 'false');
     vibrate(30);
 
     if (state.isDemoMode) {
       enableDemoMode();
     } else {
+      updateConnectionBadge('loading');
       if (state.connMode === 'supabase') {
         if (!state.supabaseUrl || !state.supabaseKey) {
           showToast('กรุณากรอก Supabase URL และ Anon Key ก่อนเชื่อมต่อ', 'error');
-          enableDemoMode();
+          updateConnectionBadge('disconnected');
           return;
         }
         initSupabaseClient();
+      } else if (state.connMode === 'mqtt') {
+        initMqttClient();
       } else {
         showToast(`กำลังเชื่อมต่อ ESP32 Local: ${state.espIp}`, 'info');
         fetchLocalData();
@@ -412,11 +416,13 @@ function setupEventListeners() {
   elements.copyHexBtn.addEventListener('click', copyHexToClipboard);
 
   // Random Color Button (Demo)
-  elements.randomColorBtn.addEventListener('click', () => {
-    vibrate(30);
-    randomizeColor();
-    showToast(`สุ่มสีใหม่: ${state.color.hex}`, 'info');
-  });
+  if (elements.randomColorBtn) {
+    elements.randomColorBtn.addEventListener('click', () => {
+      vibrate(30);
+      randomizeColor();
+      showToast(`สุ่มสีใหม่: ${state.color.hex}`, 'info');
+    });
+  }
 
   // Sensor White LED Toggle Switch
   if (elements.sensorLedToggle) {
@@ -515,7 +521,8 @@ async function initSupabaseClient() {
     if (error) {
       console.error('Supabase query error:', error);
       showToast(`เชื่อมต่อ Supabase ไม่สำเร็จ: ${error.message}`, 'error', 6000);
-      enableDemoMode();
+      state.isConnected = false;
+      updateConnectionBadge('disconnected');
       return false;
     }
 
@@ -553,7 +560,8 @@ async function initSupabaseClient() {
   } catch (err) {
     console.error('Init Supabase Client failed:', err);
     showToast('เกิดข้อผิดพลาดในการเริ่มต้น Supabase Client', 'error');
-    enableDemoMode();
+    state.isConnected = false;
+    updateConnectionBadge('disconnected');
     return false;
   }
 }
@@ -1205,7 +1213,7 @@ function updateConnectionBadge(overrideStatus) {
     if (state.connMode === 'mqtt') {
       text.textContent = '⚡ MQTT Realtime (50ms)';
     } else if (state.connMode === 'supabase') {
-      text.textContent = 'Cloud เชื่อมต่อแล้ว (Online)';
+      text.textContent = 'Online';
     } else {
       text.textContent = 'เชื่อมต่อ IP แล้ว';
     }
