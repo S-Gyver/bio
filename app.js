@@ -204,7 +204,7 @@ function setConnectionTab(mode) {
   }
 
   if (mode === 'supabase') {
-    elements.syncModeLabel.textContent = 'Supabase Realtime (Sync 800ms)';
+    elements.syncModeLabel.textContent = 'Realtime (Sync 800ms)';
     if (!state.isDemoMode && !state.supabaseClient) initSupabaseClient();
   } else if (mode === 'mqtt') {
     elements.syncModeLabel.textContent = 'MQTT Cloud (50ms Super Realtime)';
@@ -309,7 +309,7 @@ function setupEventListeners() {
       state.isDemoMode = false;
       elements.demoModeToggle.checked = false;
       localStorage.setItem('esp32_demo', 'false');
-      showToast('✅ เชื่อมต่อ Supabase Cloud สำเร็จเรียบร้อยแล้ว!', 'success');
+      showToast('✅ เชื่อมต่อ Cloud สำเร็จเรียบร้อยแล้ว!', 'success');
     }
   });
 
@@ -1221,7 +1221,7 @@ function updateConnectionBadge(overrideStatus) {
 function updateLastUpdatedTime() {
   const now = new Date();
   const timeStr = now.toLocaleTimeString('th-TH', { hour12: false });
-  elements.lastUpdated.textContent = `อัปเดตล่าสุด: ${timeStr}`;
+  elements.lastUpdated.textContent = `เวลา: ${timeStr}`;
 }
 
 // --- Theme Management ---
