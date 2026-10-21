@@ -91,6 +91,15 @@
           </h2>
           <span id="lastUpdated" class="last-updated">อัปเดตล่าสุด: กำลังโหลด...</span>
         </div>
+        <button id="openWifiModalBtn" class="btn btn-secondary btn-sm wifi-cfg-btn" type="button" title="ตั้งค่า Wi-Fi ใหม่เมื่อย้ายสถานที่">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+          </svg>
+          <span>ตั้งค่า Wi-Fi บอร์ด</span>
+        </button>
       </div>
 
       <!-- Mode Selector Tabs: Supabase Cloud vs MQTT 50ms vs Local IP -->
@@ -576,6 +585,127 @@
         <p>ESP32 IoT Dashboard &bull; Responsive Mobile-First Controller</p>
       </div>
     </footer>
+  </div>
+
+  <!-- Modal: Wi-Fi Config (Web Serial & Smart Hotspot) -->
+  <div id="wifiModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon-pill">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+              <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+              <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+              <line x1="12" y1="20" x2="12.01" y2="20"></line>
+            </svg>
+          </div>
+          <div>
+            <h3 class="modal-title">ตั้งค่า Wi-Fi สำหรับ ESP32</h3>
+            <p class="modal-subtitle">แก้ปัญหาเมื่อย้ายสถานที่ หรือบอร์ดหลุดจาก Wi-Fi เดิม</p>
+          </div>
+        </div>
+        <button id="closeWifiModalBtn" class="modal-close-btn" type="button" aria-label="ปิด">&times;</button>
+      </div>
+
+      <!-- Modal Tabs: Web Serial vs Hotspot -->
+      <div class="modal-tabs">
+        <button id="modalTabSerial" class="modal-tab active" type="button">🔌 ผ่านสาย USB (คอม)</button>
+        <button id="modalTabHotspot" class="modal-tab" type="button">📱 ผ่านมือถือ (Smart Hotspot)</button>
+      </div>
+
+      <!-- Tab 1: Web Serial API -->
+      <div id="modalPanelSerial" class="modal-panel active">
+        <div class="serial-status-bar">
+          <span class="status-dot" id="serialStatusDot"></span>
+          <span id="serialStatusText">สถานะ: ยังไม่ได้เชื่อมต่อสาย USB</span>
+        </div>
+
+        <div class="mb-3">
+          <button id="connectSerialBtn" class="btn btn-primary w-100" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+              <line x1="6" y1="6" x2="6.01" y2="6"></line>
+              <line x1="6" y1="18" x2="6.01" y2="18"></line>
+            </svg>
+            <span id="connectSerialBtnText">เชื่อมต่อพอร์ต USB (COM Port)</span>
+          </button>
+        </div>
+
+        <!-- Serial Config Controls (enabled when connected) -->
+        <div id="serialControlsWrap" style="opacity: 0.5; pointer-events: none;">
+          <div class="mb-2">
+            <div class="d-flex justify-between align-center mb-1">
+              <label class="input-label" for="serialSsidSelect">เลือก Wi-Fi รอบตัว (2.4GHz):</label>
+              <button id="scanWifiBtn" class="btn-link" type="button">🔍 สแกน Wi-Fi ใหม่</button>
+            </div>
+            <select id="serialSsidSelect" class="form-select">
+              <option value="">-- กรุณากดสแกนหา Wi-Fi --</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="input-label" for="serialWifiPass">รหัสผ่าน Wi-Fi:</label>
+            <div class="input-wrapper">
+              <input type="password" id="serialWifiPass" placeholder="กรอกรหัสผ่าน Wi-Fi (ถ้ามี)">
+            </div>
+          </div>
+
+          <button id="sendWifiBtn" class="btn btn-primary w-100" type="button">
+            <span>🚀 ส่งค่าให้ ESP32 บันทึกและเชื่อมต่อ</span>
+          </button>
+        </div>
+
+        <!-- Serial Live Terminal -->
+        <div class="serial-terminal-wrap mt-3">
+          <div class="terminal-header">
+            <span>Terminal Live Feedback</span>
+            <button id="clearTerminalBtn" class="terminal-clear" type="button">ล้าง</button>
+          </div>
+          <pre id="serialLog" class="serial-terminal">พร้อมเชื่อมต่อผ่าน Web Serial API (115200 baud)...</pre>
+        </div>
+      </div>
+
+      <!-- Tab 2: Smart Hotspot Instructions -->
+      <div id="modalPanelHotspot" class="modal-panel" style="display: none;">
+        <div class="hotspot-guide-card">
+          <div class="guide-step">
+            <div class="step-badge">1</div>
+            <div class="step-content">
+              <strong>เมื่อบอร์ดหลุดจาก Wi-Fi เดิม</strong>
+              <p>บอร์ดจะเปิด Hotspot ตัวเองอัตโนมัติภายใน 10 วินาที ชื่อ Wi-Fi:</p>
+              <div class="code-pill">📡 ESP32-Smart-Setup</div>
+            </div>
+          </div>
+
+          <div class="guide-step">
+            <div class="step-badge">2</div>
+            <div class="step-content">
+              <strong>เชื่อมต่อด้วยมือถือหรือแท็บเล็ต</strong>
+              <p>เปิด Wi-Fi บนมือถือแล้วกดเชื่อมต่อไปที่ <code>ESP32-Smart-Setup</code></p>
+            </div>
+          </div>
+
+          <div class="guide-step">
+            <div class="step-badge">3</div>
+            <div class="step-content">
+              <strong>หน้าต่างตั้งค่าจะเด้งขึ้นมาทันที</strong>
+              <p>หากไม่เด้ง ให้เปิดเบราว์เซอร์แล้วพิมพ์:</p>
+              <div class="code-pill">🌐 http://192.168.4.1</div>
+            </div>
+          </div>
+
+          <div class="guide-step">
+            <div class="step-badge">4</div>
+            <div class="step-content">
+              <strong>เลือก Wi-Fi ใหม่และใส่รหัสผ่าน</strong>
+              <p>กด Save บอร์ดจะบันทึกจำลง Flash Memory ถาวร แล้วเชื่อมต่อ Wi-Fi ทันทีโดยไม่ต้องใช้คอมหรือสาย USB ครับ!</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Toast Container -->

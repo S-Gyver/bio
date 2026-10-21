@@ -1285,5 +1285,298 @@ function showToast(message, type = 'info', duration = 2500, onClick = null) {
   }, duration);
 }
 
+// ===================================================================
+// Wi-Fi Config Modal & Web Serial API Manager
+// ===================================================================
+let serialPort = null;
+let serialReader = null;
+let serialWriter = null;
+let serialReadableStreamClosed = null;
+let serialWritableStreamClosed = null;
+
+function initWebSerialManager() {
+  const modal = document.getElementById('wifiModal');
+  const openBtn = document.getElementById('openWifiModalBtn');
+  const closeBtn = document.getElementById('closeWifiModalBtn');
+  const tabSerial = document.getElementById('modalTabSerial');
+  const tabHotspot = document.getElementById('modalTabHotspot');
+  const panelSerial = document.getElementById('modalPanelSerial');
+  const panelHotspot = document.getElementById('modalPanelHotspot');
+
+  const connectSerialBtn = document.getElementById('connectSerialBtn');
+  const connectSerialBtnText = document.getElementById('connectSerialBtnText');
+  const serialStatusDot = document.getElementById('serialStatusDot');
+  const serialStatusText = document.getElementById('serialStatusText');
+  const serialControlsWrap = document.getElementById('serialControlsWrap');
+  const scanWifiBtn = document.getElementById('scanWifiBtn');
+  const serialSsidSelect = document.getElementById('serialSsidSelect');
+  const serialWifiPass = document.getElementById('serialWifiPass');
+  const sendWifiBtn = document.getElementById('sendWifiBtn');
+  const serialLog = document.getElementById('serialLog');
+  const clearTerminalBtn = document.getElementById('clearTerminalBtn');
+
+  if (!modal || !openBtn) return;
+
+  function appendLog(msg, color = '') {
+    if (!serialLog) return;
+    const time = new Date().toLocaleTimeString('th-TH', { hour12: false });
+    serialLog.textContent += `\n[${time}] ${msg}`;
+    serialLog.scrollTop = serialLog.scrollHeight;
+  }
+
+  // Open / Close Modal
+  openBtn.addEventListener('click', () => {
+    vibrate(30);
+    modal.style.display = 'flex';
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      vibrate(20);
+      modal.style.display = 'none';
+    });
+  }
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.style.display = 'none';
+    }
+  });
+
+  // Switch Modal Tabs
+  if (tabSerial && tabHotspot) {
+    tabSerial.addEventListener('click', () => {
+      vibrate(20);
+      tabSerial.classList.add('active');
+      tabHotspot.classList.remove('active');
+      panelSerial.style.display = 'block';
+      panelHotspot.style.display = 'none';
+    });
+
+    tabHotspot.addEventListener('click', () => {
+      vibrate(20);
+      tabHotspot.classList.add('active');
+      tabSerial.classList.remove('active');
+      panelHotspot.style.display = 'block';
+      panelSerial.style.display = 'none';
+    });
+  }
+
+  // Clear Terminal
+  if (clearTerminalBtn) {
+    clearTerminalBtn.addEventListener('click', () => {
+      if (serialLog) serialLog.textContent = 'ล้างหน้าจอแล้ว...';
+    });
+  }
+
+  // Check Web Serial support
+  const isSerialSupported = 'serial' in navigator;
+  if (!isSerialSupported && connectSerialBtn) {
+    connectSerialBtn.classList.remove('btn-primary');
+    connectSerialBtn.classList.add('btn-secondary');
+    if (connectSerialBtnText) {
+      connectSerialBtnText.textContent = 'Web Serial ใช้งานได้บน Chrome / Edge';
+    }
+    appendLog('เบราว์เซอร์นี้ไม่รองรับ Web Serial API แนะนำเปิดบน Google Chrome / Microsoft Edge บนคอมพิวเตอร์ หรือใช้วิธี Smart Hotspot ผ่านมือถือ');
+  }
+
+  // Connect Serial Button
+  if (connectSerialBtn && isSerialSupported) {
+    connectSerialBtn.addEventListener('click', async () => {
+      vibrate(30);
+
+      if (serialPort) {
+        // Disconnect
+        await disconnectSerial();
+        return;
+      }
+
+      try {
+        appendLog('กำลังเปิดหน้าต่างเลือกพอร์ต USB...');
+        serialPort = await navigator.serial.requestPort();
+        await serialPort.open({ baudRate: 115200 });
+
+        // Update UI
+        if (serialStatusDot) serialStatusDot.style.background = '#34c759';
+        if (serialStatusText) serialStatusText.textContent = 'เชื่อมต่อพอร์ต Serial สำเร็จ (115200 baud)';
+        if (connectSerialBtnText) connectSerialBtnText.textContent = 'ตัดการเชื่อมต่อ USB';
+        connectSerialBtn.classList.remove('btn-primary');
+        connectSerialBtn.classList.add('btn-secondary');
+        if (serialControlsWrap) {
+          serialControlsWrap.style.opacity = '1';
+          serialControlsWrap.style.pointerEvents = 'auto';
+        }
+
+        appendLog('✅ เชื่อมต่อ USB Serial พอร์ตสำเร็จเรียบร้อย!');
+        showToast('✅ เชื่อมต่อพอร์ต USB สำเร็จแล้ว!', 'success');
+
+        // Setup Streams
+        const textDecoder = new TextDecoderStream();
+        serialReadableStreamClosed = serialPort.readable.pipeTo(textDecoder.writable);
+        serialReader = textDecoder.readable.getReader();
+
+        const textEncoder = new TextEncoderStream();
+        serialWritableStreamClosed = textEncoder.readable.pipeTo(serialPort.writable);
+        serialWriter = textEncoder.writable.getWriter();
+
+        // Read Loop
+        readSerialLoop();
+
+        // Auto request device info
+        setTimeout(() => {
+          sendSerialCommand('CMD:GET_INFO');
+        }, 500);
+
+      } catch (err) {
+        console.error('Serial connection error:', err);
+        appendLog(`⚠️ ข้อผิดพลาด: ${err.message}`);
+        showToast(`เชื่อมต่อไม่สำเร็จ: ${err.message}`, 'error');
+      }
+    });
+  }
+
+  async function disconnectSerial() {
+    try {
+      if (serialReader) {
+        await serialReader.cancel();
+        await serialReadableStreamClosed.catch(() => {});
+        serialReader = null;
+      }
+      if (serialWriter) {
+        await serialWriter.close();
+        await serialWritableStreamClosed;
+        serialWriter = null;
+      }
+      if (serialPort) {
+        await serialPort.close();
+        serialPort = null;
+      }
+
+      if (serialStatusDot) serialStatusDot.style.background = '#8e8e93';
+      if (serialStatusText) serialStatusText.textContent = 'สถานะ: ยังไม่ได้เชื่อมต่อสาย USB';
+      if (connectSerialBtnText) connectSerialBtnText.textContent = 'เชื่อมต่อพอร์ต USB (COM Port)';
+      if (connectSerialBtn) {
+        connectSerialBtn.classList.remove('btn-secondary');
+        connectSerialBtn.classList.add('btn-primary');
+      }
+      if (serialControlsWrap) {
+        serialControlsWrap.style.opacity = '0.5';
+        serialControlsWrap.style.pointerEvents = 'none';
+      }
+
+      appendLog('🛑 ตัดการเชื่อมต่อพอร์ต USB แล้ว');
+      showToast('ตัดการเชื่อมต่อ USB แล้ว', 'info');
+    } catch (e) {
+      console.warn('Error disconnecting serial:', e);
+    }
+  }
+
+  async function sendSerialCommand(cmd) {
+    if (!serialWriter) {
+      showToast('กรุณาเชื่อมต่อสาย USB ก่อน', 'error');
+      return;
+    }
+    try {
+      appendLog(`>>> ส่งคำสั่ง: ${cmd}`);
+      await serialWriter.write(cmd + '\n');
+    } catch (e) {
+      appendLog(`⚠️ ไม่สามารถส่งคำสั่งได้: ${e.message}`);
+    }
+  }
+
+  async function readSerialLoop() {
+    let buffer = '';
+    try {
+      while (serialReader) {
+        const { value, done } = await serialReader.read();
+        if (done) break;
+        if (value) {
+          buffer += value;
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // keep unfinished line
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (line) processIncomingSerialLine(line);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Serial read loop stopped:', e);
+    }
+  }
+
+  function processIncomingSerialLine(line) {
+    appendLog(line);
+
+    // Try parse JSON events from ESP32
+    if (line.startsWith('{') && line.endsWith('}')) {
+      try {
+        const data = JSON.parse(line);
+        if (data.event === 'scan_result' && Array.isArray(data.networks)) {
+          if (serialSsidSelect) {
+            serialSsidSelect.innerHTML = '';
+            if (data.networks.length === 0) {
+              serialSsidSelect.innerHTML = '<option value="">-- ไม่พบ Wi-Fi 2.4GHz --</option>';
+            } else {
+              data.networks.forEach(net => {
+                const opt = document.createElement('option');
+                opt.value = net;
+                opt.textContent = `📶 ${net}`;
+                serialSsidSelect.appendChild(opt);
+              });
+            }
+          }
+          showToast(`🔍 พบ Wi-Fi ทั้งหมด ${data.networks.length} เครือข่าย`, 'success');
+        } else if (data.event === 'wifi_status') {
+          if (data.status === 'connecting') {
+            showToast(`บอร์ดกำลังเชื่อมต่อ Wi-Fi: ${data.ssid}...`, 'info');
+          } else if (data.status === 'connected') {
+            showToast(`🎉 ESP32 เชื่อมต่อ Wi-Fi สำเร็จ! IP: ${data.ip}`, 'success', 6000);
+            state.espIp = data.ip;
+            localStorage.setItem('esp32_ip', data.ip);
+            if (elements.espIpInput) elements.espIpInput.value = data.ip;
+            appendLog(`🎉 [สำเร็จ] อัปเดต IP: ${data.ip} เข้า Dashboard เรียบร้อยแล้ว!`);
+          } else if (data.status === 'failed') {
+            showToast('⚠️ เชื่อมต่อ Wi-Fi ไม่สำเร็จ กรุณาเช็ครหัสผ่าน', 'error', 5000);
+          }
+        } else if (data.event === 'device_info') {
+          appendLog(`ℹ️ [สถานะปัจจุบัน] Wi-Fi: ${data.ssid || '-'} | IP: ${data.ip || '-'}`);
+        }
+      } catch (e) {}
+    }
+  }
+
+  // Scan Wi-Fi Button
+  if (scanWifiBtn) {
+    scanWifiBtn.addEventListener('click', () => {
+      vibrate(25);
+      sendSerialCommand('CMD:SCAN_WIFI');
+      showToast('กำลังสั่งให้ ESP32 สแกนหา Wi-Fi รอบตัว...', 'info');
+    });
+  }
+
+  // Send Wi-Fi Config Button
+  if (sendWifiBtn) {
+    sendWifiBtn.addEventListener('click', () => {
+      const ssid = serialSsidSelect ? serialSsidSelect.value.trim() : '';
+      const pass = serialWifiPass ? serialWifiPass.value.trim() : '';
+
+      if (!ssid) {
+        showToast('กรุณาเลือกชื่อ Wi-Fi ก่อน', 'error');
+        return;
+      }
+
+      vibrate(35);
+      appendLog(`ส่งข้อมูลบันทึก Wi-Fi -> SSID: ${ssid}`);
+      sendSerialCommand(`CMD:SET_WIFI:${ssid}:${pass}`);
+      showToast(`ส่งข้อมูล Wi-Fi ให้ ESP32 แล้ว กำลังเชื่อมต่อ...`, 'info', 4000);
+    });
+  }
+}
+
 // Start application when DOM is ready
-document.addEventListener('DOMContentLoaded', initApp);
+document.addEventListener('DOMContentLoaded', () => {
+  initApp();
+  initWebSerialManager();
+});
+
