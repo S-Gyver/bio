@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ESP32 Smart Controller & IoT Dashboard</title>
   <meta name="description" content="โมเดิร์นแดชบอร์ดสำหรับควบคุมบอร์ด ESP32 รีเลย์ 4 ช่อง เซนเซอร์ DHT22 และเซนเซอร์ตรวจจับสี TCS34725">
-  <meta name="theme-color" content="#0f172a">
+  <meta name="theme-color" content="#0d0b1e">
 
-  <!-- Google Fonts: Inter & Sarabun -->
+  <!-- Google Fonts: Chakra Petch (Arcade Thai/Eng), Pixel (Press Start 2P, VT323) + Kanit -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,500;0,600;0,700;1,600&family=Press+Start+2P&family=VT323&family=Kanit:wght@400;500;600&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   
   <!-- Supabase JS Client for Cloud & GitHub Pages -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -19,6 +19,7 @@
   <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
   
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="pixel.css?v=2">
 </head>
 <body>
   <!-- Background Glow FX -->
@@ -26,6 +27,8 @@
     <div class="glow-orb glow-top"></div>
     <div class="glow-orb glow-bottom"></div>
   </div>
+  <!-- CRT scanlines (pixel theme) -->
+  <div class="crt-overlay" aria-hidden="true"></div>
 
   <div class="app-container">
     <!-- Header -->
@@ -47,7 +50,7 @@
         </div>
         <div>
           <h1 class="brand-title">ESP32 Smart Controller</h1>
-          <p class="brand-subtitle">IoT Dashboard &bull; GitHub Pages + Supabase</p>
+          <p class="brand-subtitle">IoT Dashboard &bull; GitHub Pages + Supabase <span class="insert-coin" aria-hidden="true">INSERT COIN</span></p>
         </div>
       </div>
 
@@ -260,7 +263,7 @@
             <div class="relay-info">
               <span class="relay-badge">CH 1 (GPIO 16)</span>
               <h3 class="relay-title">Relay 1</h3>
-              <span class="relay-subtitle">ไฟห้องนั่งเล่น</span>
+              <span class="relay-subtitle">ไฟ Grow Light</span>
             </div>
             <div class="relay-status-pill" id="relayStatusText-1">OFF</div>
           </div>
@@ -289,7 +292,7 @@
             <div class="relay-info">
               <span class="relay-badge">CH 2 (GPIO 17)</span>
               <h3 class="relay-title">Relay 2</h3>
-              <span class="relay-subtitle">พัดลมระบายอากาศ</span>
+              <span class="relay-subtitle">ปั้ม Oxygen</span>
             </div>
             <div class="relay-status-pill" id="relayStatusText-2">OFF</div>
           </div>
@@ -318,7 +321,7 @@
             <div class="relay-info">
               <span class="relay-badge">CH 3 (GPIO 18)</span>
               <h3 class="relay-title">Relay 3</h3>
-              <span class="relay-subtitle">ไฟโต๊ะทำงาน</span>
+              <span class="relay-subtitle">อากาศออก</span>
             </div>
             <div class="relay-status-pill" id="relayStatusText-3">OFF</div>
           </div>
@@ -582,6 +585,7 @@
 
     <!-- Footer -->
     <footer class="app-footer">
+      <div class="pixel-ground" aria-hidden="true"></div>
       <div class="footer-content">
         <p>ESP32 IoT Dashboard &bull; Responsive Mobile-First Controller</p>
         <p class="footer-sub">REST API Endpoints: <code>/api/data</code> | <code>/toggle?ch=N</code></p>
