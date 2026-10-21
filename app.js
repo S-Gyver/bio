@@ -6,7 +6,7 @@
 // --- Application State ---
 const state = {
   // Connection Mode: 'supabase' (Cloud) or 'local' (WiFi Direct)
-  connMode: localStorage.getItem('esp32_conn_mode') || 'supabase',
+  connMode: (localStorage.getItem('esp32_conn_mode') === 'local') ? 'local' : 'supabase',
   
   // Supabase Credentials (ใช้โปรเจกต์เดิมเป็นค่าเริ่มต้น)
   supabaseUrl: localStorage.getItem('supabase_url') || 'https://igiihteeeprpcxxlldkd.supabase.co',
@@ -43,10 +43,6 @@ const state = {
   },
   sensorLed: true,
 
-  // MQTT Config (50ms Super Realtime)
-  mqttBroker: localStorage.getItem('mqtt_broker') || 'wss://broker.hivemq.com:8884/mqtt',
-  mqttTopic: localStorage.getItem('mqtt_topic') || 'sgyver/esp32',
-  mqttClient: null
 };
 
 // User interaction lockouts to prevent stale in-flight packets from bouncing switch states
@@ -69,17 +65,10 @@ const elements = {
 
   // Tabs & Settings
   tabSupabase: document.getElementById('tabSupabase'),
-  tabMqtt: document.getElementById('tabMqtt'),
   tabLocal: document.getElementById('tabLocal'),
   panelSupabase: document.getElementById('panelSupabase'),
-  panelMqtt: document.getElementById('panelMqtt'),
   panelLocal: document.getElementById('panelLocal'),
   demoModeToggle: document.getElementById('demoModeToggle'),
-
-  // MQTT Fields
-  mqttBrokerInput: document.getElementById('mqttBrokerInput'),
-  mqttTopicInput: document.getElementById('mqttTopicInput'),
-  saveMqttBtn: document.getElementById('saveMqttBtn'),
 
   // Supabase Fields
   supabaseUrlInput: document.getElementById('supabaseUrlInput'),
@@ -158,7 +147,6 @@ function initApp() {
   elements.supabaseUrlInput.value = state.supabaseUrl;
   elements.supabaseKeyInput.value = state.supabaseKey;
   elements.espIpInput.value = state.espIp;
-  if (elements.mqttBrokerInput) elements.mqttBrokerInput.value = state.mqttBroker;
   if (elements.demoModeToggle) elements.demoModeToggle.checked = false;
 
   // Set initial Tab
@@ -178,8 +166,6 @@ function initApp() {
 
   if (state.connMode === 'supabase' && state.supabaseUrl && state.supabaseKey) {
     initSupabaseClient();
-  } else if (state.connMode === 'mqtt') {
-    initMqttClient();
   } else if (state.connMode === 'local' && state.espIp) {
     fetchLocalData();
   } else {
@@ -192,25 +178,15 @@ function setConnectionTab(mode) {
   state.connMode = mode;
   localStorage.setItem('esp32_conn_mode', mode);
 
-  elements.tabSupabase.classList.toggle('active', mode === 'supabase');
-  if (elements.tabMqtt) elements.tabMqtt.classList.toggle('active', mode === 'mqtt');
-  elements.tabLocal.classList.toggle('active', mode === 'local');
+  if (elements.tabSupabase) elements.tabSupabase.classList.toggle('active', mode === 'supabase');
+  if (elements.tabLocal) elements.tabLocal.classList.toggle('active', mode === 'local');
 
-  elements.panelSupabase.style.display = mode === 'supabase' ? 'block' : 'none';
-  if (elements.panelMqtt) elements.panelMqtt.style.display = mode === 'mqtt' ? 'block' : 'none';
-  elements.panelLocal.style.display = mode === 'local' ? 'block' : 'none';
-
-  // Retain background Supabase sync if credentials exist
-  if (state.supabaseUrl && state.supabaseKey && !state.supabaseClient) {
-    getSupabaseClient();
-  }
+  if (elements.panelSupabase) elements.panelSupabase.style.display = mode === 'supabase' ? 'block' : 'none';
+  if (elements.panelLocal) elements.panelLocal.style.display = mode === 'local' ? 'block' : 'none';
 
   if (mode === 'supabase') {
-    elements.syncModeLabel.textContent = 'Realtime (Sync 800ms)';
-    if (!state.isDemoMode && !state.supabaseClient) initSupabaseClient();
-  } else if (mode === 'mqtt') {
-    elements.syncModeLabel.textContent = 'MQTT Cloud (50ms Super Realtime)';
-    if (!state.isDemoMode) initMqttClient();
+    elements.syncModeLabel.textContent = 'Supabase Realtime (WSS)';
+    if (!state.supabaseClient) initSupabaseClient();
   } else {
     elements.syncModeLabel.textContent = 'HTTP Fetch (Local LAN)';
   }
@@ -227,30 +203,8 @@ function setupEventListeners() {
   });
 
   // Tab Switching
-  elements.tabSupabase.addEventListener('click', () => setConnectionTab('supabase'));
-  if (elements.tabMqtt) elements.tabMqtt.addEventListener('click', () => setConnectionTab('mqtt'));
-  elements.tabLocal.addEventListener('click', () => setConnectionTab('local'));
-
-  // Save MQTT Config & Reconnect
-  if (elements.saveMqttBtn) {
-    elements.saveMqttBtn.addEventListener('click', () => {
-      const broker = elements.mqttBrokerInput.value.trim();
-      const topic = elements.mqttTopicInput.value.trim();
-      if (!broker || !topic) {
-        showToast('กรุณากรอกทั้ง MQTT Broker และ Topic', 'error');
-        return;
-      }
-      state.mqttBroker = broker;
-      state.mqttTopic = topic;
-      localStorage.setItem('mqtt_broker', broker);
-      localStorage.setItem('mqtt_topic', topic);
-      state.isDemoMode = false;
-      if (elements.demoModeToggle) elements.demoModeToggle.checked = false;
-      localStorage.removeItem('esp32_demo');
-      vibrate(30);
-      initMqttClient();
-    });
-  }
+  if (elements.tabSupabase) elements.tabSupabase.addEventListener('click', () => setConnectionTab('supabase'));
+  if (elements.tabLocal) elements.tabLocal.addEventListener('click', () => setConnectionTab('local'));
 
   // Demo Mode Switch (if exists in DOM)
   if (elements.demoModeToggle) {
@@ -269,8 +223,6 @@ function setupEventListeners() {
             return;
           }
           initSupabaseClient();
-        } else if (state.connMode === 'mqtt') {
-          initMqttClient();
         } else {
           showToast(`กำลังเชื่อมต่อ ESP32 Local: ${state.espIp}`, 'info');
           fetchLocalData();
@@ -287,8 +239,6 @@ function setupEventListeners() {
         updateConnectionBadge('loading');
         if (state.connMode === 'supabase') {
           initSupabaseClient();
-        } else if (state.connMode === 'mqtt') {
-          initMqttClient();
         } else {
           fetchLocalData();
         }
@@ -450,17 +400,6 @@ function setupEventListeners() {
 
       if (state.isDemoMode) {
         showToast(`ไฟ LED ส่องสี: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, isChecked ? 'success' : 'info', 1800);
-        return;
-      }
-
-      // If in MQTT Realtime Mode (50ms)
-      if (state.connMode === 'mqtt' && state.mqttClient && state.mqttClient.connected) {
-        state.mqttClient.publish(`${state.mqttTopic}/commands`, JSON.stringify({
-          led: isChecked
-        }));
-        // Hybrid Auto-Sync to Supabase table
-        syncToSupabase({ name: isChecked ? 'led_on' : 'led_off' }, 0);
-        showToast(`⚡ ไฟ LED: ${isChecked ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success', 1800);
         return;
       }
 
@@ -628,147 +567,6 @@ function syncToSupabase(data, debounceMs = 0) {
   }
 }
 
-// --- MQTT Realtime Client (50ms Super Realtime) ---
-function initMqttClient() {
-  if (typeof mqtt === 'undefined') {
-    showToast('กำลังโหลด MQTT Client...', 'info');
-    return;
-  }
-
-  if (state.mqttClient) {
-    try { state.mqttClient.end(true); } catch (e) {}
-  }
-
-  showToast('⚡ กำลังเชื่อมต่อ MQTT Cloud Broker (50ms)...', 'info');
-  updateConnectionBadge('loading');
-
-  try {
-    const client = mqtt.connect(state.mqttBroker, {
-      clientId: 'Web_' + Math.random().toString(16).substring(2, 10),
-      clean: true,
-      connectTimeout: 5000,
-      reconnectPeriod: 2500
-    });
-
-    client.on('connect', () => {
-      state.isConnected = true;
-      updateConnectionBadge('connected');
-      elements.pingValue.textContent = '50ms (MQTT)';
-      showToast('⚡ เชื่อมต่อ MQTT สำเร็จ! ความเร็วสูงสุดระดับ 50ms', 'success');
-
-      // Subscribe to telemetry and status
-      client.subscribe(`${state.mqttTopic}/sensors`);
-      client.subscribe(`${state.mqttTopic}/status`);
-    });
-
-    client.on('message', (topic, message) => {
-      try {
-        const payloadStr = message.toString();
-        const data = JSON.parse(payloadStr);
-
-        if (topic.endsWith('/sensors')) {
-          const now = Date.now();
-
-          // 1. Relays Sync with Lockout Guard (prevent bounce from in-flight packets)
-          if (Array.isArray(data.relays)) {
-            let relaysChanged = false;
-            data.relays.forEach((val, idx) => {
-              if (idx < 4) {
-                // If user toggled this switch recently (< 1.5s), keep user's state!
-                if (now - lastUserRelayActionTime[idx] >= 1500) {
-                  const b = Boolean(val);
-                  if (state.relays[idx] !== b) {
-                    state.relays[idx] = b;
-                    relaysChanged = true;
-                  }
-                }
-              }
-            });
-            if (relaysChanged) renderRelays();
-          }
-
-          // 2. DHT Temp & Humidity Sync (only render if actually changed)
-          let dhtChanged = false;
-          if (typeof data.temp === 'number' && Math.abs(state.dht.temp - data.temp) >= 0.1) {
-            state.dht.temp = Number(data.temp);
-            dhtChanged = true;
-          }
-          if (typeof data.hum === 'number' && Math.abs(state.dht.hum - data.hum) >= 0.1) {
-            state.dht.hum = Number(data.hum);
-            dhtChanged = true;
-          }
-          if (dhtChanged) renderDHT();
-
-          // 3. Color Sensor Sync (always update live color immediately)
-          if (data.color) {
-            state.color.r = data.color.r ?? state.color.r;
-            state.color.g = data.color.g ?? state.color.g;
-            state.color.b = data.color.b ?? state.color.b;
-            state.color.c = data.color.c ?? state.color.c;
-            state.color.hex = data.color.hex || rgbToHex(state.color.r, state.color.g, state.color.b);
-            renderColorSensor();
-          }
-
-          // 4. White LED Sync (with lockout)
-          if (data.led !== undefined && (now - lastUserLedActionTime >= 1500)) {
-            const bLed = Boolean(data.led);
-            if (state.sensorLed !== bLed) {
-              state.sensorLed = bLed;
-              if (elements.sensorLedToggle) elements.sensorLedToggle.checked = state.sensorLed;
-              if (elements.sensorLedStatusText) {
-                elements.sensorLedStatusText.textContent = state.sensorLed ? 'เปิด' : 'ปิด';
-                elements.sensorLedStatusText.style.color = state.sensorLed ? '#3b82f6' : '#94a3b8';
-              }
-            }
-          }
-
-          // 5. Throttled Background Auto-Sync to Supabase Table (at most once every 5 seconds)
-          if (now - lastTelemetrySyncTime >= 5000) {
-            lastTelemetrySyncTime = now;
-            syncToSupabase({
-              temperature: state.dht.temp,
-              humidity: state.dht.hum,
-              color_r: state.color.r,
-              color_g: state.color.g,
-              color_b: state.color.b,
-              color_c: state.color.c,
-              color_hex: state.color.hex,
-              relay1: state.relays[0],
-              relay2: state.relays[1],
-              relay3: state.relays[2],
-              relay4: state.relays[3]
-            }, 0);
-          }
-
-          updateLastUpdatedTime();
-        }
-      } catch (err) {
-        console.error('MQTT message error:', err);
-      }
-    });
-
-    // Also fetch last saved state from Supabase table to pre-populate dashboard immediately
-    if (state.supabaseUrl && state.supabaseKey) {
-      fetchSupabaseData();
-    }
-
-    client.on('error', (err) => {
-      console.warn('MQTT Connection Error:', err);
-    });
-
-    client.on('close', () => {
-      if (state.connMode === 'mqtt' && !state.isDemoMode) {
-        updateConnectionBadge('disconnected');
-        elements.pingValue.textContent = 'กำลังต่อใหม่...';
-      }
-    });
-
-    state.mqttClient = client;
-  } catch (err) {
-    console.error('MQTT exception:', err);
-  }
-}
-
 async function fetchSupabaseData(showNotification = false) {
   if (!state.supabaseClient) getSupabaseClient();
   if (!state.supabaseClient) return;
@@ -792,12 +590,11 @@ async function fetchSupabaseData(showNotification = false) {
 
 function applyDeviceDataFromSupabase(dev) {
   const now = Date.now();
-  const isMqttMode = state.connMode === 'mqtt';
 
   // Relays sync with lockout guard
   let relaysChanged = false;
   [dev.relay1, dev.relay2, dev.relay3, dev.relay4].forEach((val, idx) => {
-    if (!isMqttMode || (now - lastUserRelayActionTime[idx] >= 1500)) {
+    if (now - lastUserRelayActionTime[idx] >= 1500) {
       const b = Boolean(val);
       if (state.relays[idx] !== b) {
         state.relays[idx] = b;
@@ -821,7 +618,7 @@ function applyDeviceDataFromSupabase(dev) {
   }
 
   // Sync Sensor White LED state
-  if (!isMqttMode || (now - lastUserLedActionTime >= 1500)) {
+  if (now - lastUserLedActionTime >= 1500) {
     if (dev.name === 'led_off') {
       state.sensorLed = false;
     } else if (dev.name === 'led_on') {
@@ -844,7 +641,7 @@ async function handleRelayToggle(channel, targetState) {
   const index = channel - 1;
   const previousState = state.relays[index];
 
-  // Set Lockout Guard so incoming MQTT packets from 50ms ago won't bounce switch state!
+  // Set Lockout Guard
   lastUserRelayActionTime[index] = Date.now();
 
   // Optimistic UI Update
@@ -853,18 +650,6 @@ async function handleRelayToggle(channel, targetState) {
 
   if (state.isDemoMode) {
     showToast(`Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, targetState ? 'success' : 'info', 1800);
-    return;
-  }
-
-  // If in MQTT Realtime Mode (50ms)
-  if (state.connMode === 'mqtt' && state.mqttClient && state.mqttClient.connected) {
-    state.mqttClient.publish(`${state.mqttTopic}/commands`, JSON.stringify({
-      relay: channel,
-      state: targetState
-    }));
-    // Hybrid Auto-Sync to Supabase table
-    syncToSupabase({ [`relay${channel}`]: targetState }, 0);
-    showToast(`⚡ Relay ${channel}: ${targetState ? 'เปิด (ON)' : 'ปิด (OFF)'}`, 'success', 1800);
     return;
   }
 
@@ -916,22 +701,6 @@ async function handleMasterAll(targetState) {
 
   if (state.isDemoMode) {
     showToast(`สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมด 4 ช่อง เรียบร้อย`, targetState ? 'success' : 'info', 1800);
-    return;
-  }
-
-  // If in MQTT Realtime Mode (50ms)
-  if (state.connMode === 'mqtt' && state.mqttClient && state.mqttClient.connected) {
-    state.mqttClient.publish(`${state.mqttTopic}/commands`, JSON.stringify({
-      master: targetState
-    }));
-    // Hybrid Auto-Sync all relays to Supabase table
-    syncToSupabase({
-      relay1: targetState,
-      relay2: targetState,
-      relay3: targetState,
-      relay4: targetState
-    }, 0);
-    showToast(`⚡ สั่ง${targetState ? 'เปิด' : 'ปิด'}ทั้งหมดเรียบร้อย`, 'success', 1800);
     return;
   }
 
@@ -1219,9 +988,7 @@ function updateConnectionBadge(overrideStatus) {
 
   if (status === 'cloud' || status === 'connected') {
     badge.classList.add('status-connected');
-    if (state.connMode === 'mqtt') {
-      text.textContent = '⚡ MQTT Realtime (50ms)';
-    } else if (state.connMode === 'supabase') {
+    if (state.connMode === 'supabase') {
       text.textContent = 'Online';
     } else {
       text.textContent = 'เชื่อมต่อ IP แล้ว';
@@ -1574,9 +1341,91 @@ function initWebSerialManager() {
   }
 }
 
+// ===================================================================
+// Firmware Flasher & Wiring Modal Manager
+// ===================================================================
+function initFlasherModalManager() {
+  const modal = document.getElementById('flasherModal');
+  const openBtn = document.getElementById('openFlasherModalBtn');
+  const closeBtn = document.getElementById('closeFlasherModalBtn');
+
+  const tabWiring = document.getElementById('flasherTabWiring');
+  const tabInstall = document.getElementById('flasherTabInstall');
+  const tabCode = document.getElementById('flasherTabCode');
+
+  const panelWiring = document.getElementById('flasherPanelWiring');
+  const panelInstall = document.getElementById('flasherPanelInstall');
+  const panelCode = document.getElementById('flasherPanelCode');
+
+  const copyInoBtn = document.getElementById('copyInoBtn');
+  const inoCodePreview = document.getElementById('inoCodePreview');
+
+  if (!modal || !openBtn) return;
+
+  openBtn.addEventListener('click', () => {
+    vibrate(30);
+    modal.style.display = 'flex';
+    loadInoCode();
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      vibrate(20);
+      modal.style.display = 'none';
+    });
+  }
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.style.display = 'none';
+  });
+
+  function switchTab(activeTab, activePanel) {
+    vibrate(20);
+    [tabWiring, tabInstall, tabCode].forEach(t => t && t.classList.remove('active'));
+    [panelWiring, panelInstall, panelCode].forEach(p => p && (p.style.display = 'none'));
+    if (activeTab) activeTab.classList.add('active');
+    if (activePanel) activePanel.style.display = 'block';
+  }
+
+  if (tabWiring) tabWiring.addEventListener('click', () => switchTab(tabWiring, panelWiring));
+  if (tabInstall) tabInstall.addEventListener('click', () => switchTab(tabInstall, panelInstall));
+  if (tabCode) tabCode.addEventListener('click', () => {
+    switchTab(tabCode, panelCode);
+    loadInoCode();
+  });
+
+  let loadedInoCode = '';
+  async function loadInoCode() {
+    if (loadedInoCode) return;
+    try {
+      const res = await fetch('esp32_supabase.ino');
+      if (res.ok) {
+        loadedInoCode = await res.text();
+        if (inoCodePreview) inoCodePreview.textContent = loadedInoCode;
+      }
+    } catch (e) {
+      if (inoCodePreview) inoCodePreview.textContent = '// ไม่สามารถโหลดไฟล์โค้ดอัตโนมัติได้ สามารถเปิดไฟล์ esp32_supabase.ino ในโปรเจกต์ได้โดยตรง';
+    }
+  }
+
+  if (copyInoBtn) {
+    copyInoBtn.addEventListener('click', async () => {
+      vibrate(30);
+      if (!loadedInoCode) await loadInoCode();
+      if (loadedInoCode && navigator.clipboard) {
+        await navigator.clipboard.writeText(loadedInoCode);
+        showToast('📋 คัดลอกโค้ด C++ (esp32_supabase.ino) เรียบร้อยแล้ว!', 'success');
+      } else {
+        showToast('กรุณาคัดลอกจากหน้าต่างด้านล่าง', 'info');
+      }
+    });
+  }
+}
+
 // Start application when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   initApp();
   initWebSerialManager();
+  initFlasherModalManager();
 });
 

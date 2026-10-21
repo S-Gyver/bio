@@ -1,0 +1,13 @@
+{
+  "name": "ESP32 Smart Controller & IoT Dashboard",
+  "version": "1.0.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "esp32_supabase.ino", "offset": 0 }
+      ]
+    }
+  ]
+}

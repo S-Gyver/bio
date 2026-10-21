@@ -1630,3 +1630,158 @@ body {
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
+/* ===================================================================
+   Firmware Flasher & Wiring Guide Modal Styles
+   =================================================================== */
+.modal-lg {
+  max-width: 580px;
+}
+
+.header-btn-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.flasher-btn {
+  font-size: 0.82rem;
+  padding: 0.4rem 0.8rem;
+  gap: 0.4rem;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 149, 0, 0.12);
+  color: var(--apple-orange);
+  border: 1px solid rgba(255, 149, 0, 0.25);
+}
+.flasher-btn:hover {
+  background: rgba(255, 149, 0, 0.2);
+}
+
+.wiring-guide-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.wiring-group-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--apple-text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.pin-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 0.75rem;
+  background: var(--apple-bg);
+  border-radius: 10px;
+  border: 1px solid var(--apple-border);
+  font-size: 0.82rem;
+}
+
+.pin-badge {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  min-width: 72px;
+  text-align: center;
+}
+.pin-esp {
+  background: rgba(0, 113, 227, 0.12);
+  color: var(--apple-blue);
+}
+.pin-pwr {
+  background: rgba(255, 59, 48, 0.12);
+  color: var(--apple-red);
+}
+.pin-gnd {
+  background: rgba(120, 120, 128, 0.16);
+  color: var(--apple-text-secondary);
+}
+
+.pin-arrow {
+  color: var(--apple-text-muted);
+  font-weight: 600;
+}
+.pin-label {
+  color: var(--apple-text-primary);
+  font-weight: 500;
+}
+
+/* Installer Card */
+.installer-card {
+  text-align: center;
+  padding: 1rem 0;
+}
+.installer-card h4 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--apple-text-primary);
+  margin: 0 0 0.4rem;
+}
+.installer-card p {
+  font-size: 0.85rem;
+  color: var(--apple-text-secondary);
+  line-height: 1.45;
+  margin: 0 0 1.25rem;
+}
+
+.installer-steps-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  text-align: left;
+  margin-top: 1.5rem;
+}
+.hint-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--apple-bg);
+  padding: 0.6rem 0.85rem;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  color: var(--apple-text-secondary);
+  border: 1px solid var(--apple-border);
+}
+.hint-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--apple-blue);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Code View Card */
+.code-view-card {
+  display: flex;
+  flex-direction: column;
+}
+.ino-code-preview {
+  margin: 0.5rem 0 0;
+  max-height: 280px;
+  overflow-y: auto;
+  background: #18181b;
+  color: #f4f4f5;
+  padding: 1rem;
+  border-radius: 14px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  border: 1px solid var(--apple-border);
+}
+[data-theme="dark"] .ino-code-preview {
+  background: #09090b;
+}
+
+
